@@ -1,0 +1,11 @@
+model:
+  name: albef_14m_pretrained
+  adapter: albef_m0_itc_adapter
+  architecture: cross_attention_fusion
+
+m0:
+  checkpoint: data/raw/models/albef/ALBEF_14M.pth
+  text_backbone: data/raw/models/albef/bert-base-uncased
+  output: raw_itc_projection_pre_l2
+  image_preprocess: official_albef_test_transform_256
+  text_preprocess: official_albef_pre_caption_max_words_30

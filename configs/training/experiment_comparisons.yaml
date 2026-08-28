@@ -1,0 +1,113 @@
+schema_version: 1
+status: locked
+
+model_initializations:
+  clip_vit_l14:
+    checkpoint: data/raw/models/clip_sf/ViT-L-14.pt
+    checkpoint_sha256: b8cca3fd41ae0c99ba7e8951adf17d267cdb84cd88be6f7c2e0eca1737a03836
+  vista_stage1:
+    checkpoint: data/raw/models/vista/BGE_EVA_Token_S1.pth
+    checkpoint_sha256: 05a4ce3033d52f96032c2cb79958b361ea9f378aa4dac44069476b433d7281cf
+    provenance: author_hosted_JUNJIE99_VISTA
+  albef_14m_pretrained:
+    checkpoint: data/raw/models/albef/ALBEF_14M.pth
+    checkpoint_sha256: 41c106161c9eb1a950260a2773995af67917ee8887bfb2a46a2e2aeed92fb2c7
+  beit3_base_itc:
+    checkpoint: data/raw/models/beit3/beit3_base_itc_patch16_224.pth
+    checkpoint_sha256: d483a41d92b9aea7ef87d17551413b8c22faae927110666b01ac3aa7a199a25b
+
+shared_analysis:
+  checkpoint_origin: m0
+  extracted_representations:
+    - e_I
+    - e_T
+  metrics:
+    - centroid_gap
+    - covariance_gap
+    - effective_rank
+    - cross_modal_alignment
+    - intra_modal_geometry_preservation
+    - score_gap
+  primary_analysis: checkpoint_delta_from_m0
+
+comparison_families:
+  relation_intervention:
+    models:
+      - clip_vit_l14
+      - vista_stage1
+      - beit3_base_itc
+    branches:
+      standard_cl:
+        branch_id: standard
+        relations:
+          - I_to_T
+          - T_to_I
+      count_matched_mixed_cl:
+        branch_id: count_matched_mixed
+        relation_cycle:
+          - I_bidirectional_T
+          - I_bidirectional_IT
+          - T_bidirectional_IT
+        positive_supervision_count_matched: true
+        negative_count_per_query_matched: true
+        same_semantic_instance_excluded_from_negatives: true
+    e_IT_rules:
+      clip_vit_l14:
+        type: additive
+        formula: normalize(e_I + e_T)
+        extra_forward_path: false
+      vista_stage1:
+        type: native_joint_encoder
+        formula: encode_multimodal(I, T)
+        extra_forward_path: true
+        analysis_warning: relation_change_is_confound_with_joint_forward_compute
+      beit3_base_itc:
+        type: additive
+        formula: normalize(e_I + e_T)
+        extra_forward_path: false
+    interpretation: standard_cl_vs_count_matched_mixed_cl
+
+  albef_native_objective_intervention:
+    models:
+      - albef_14m_pretrained
+    artificial_mixed_e_IT: false
+    branches:
+      itc_only:
+        branch_id: itc_only
+        losses:
+          - ITC
+        native_fusion_objectives_enabled: false
+      full_albef:
+        branch_id: full_albef
+        losses:
+          - ITC
+          - ITM
+          - MLM
+        native_cross_attention_training_enabled: true
+    extracted_representations:
+      - e_I
+      - e_T
+    interpretation: itc_only_vs_native_full_cross_attention_training
+    explicitly_not_equivalent_to:
+      - count_matched_mixed_cl
+      - artificial_I_T_IT_relation_training
+
+reference_only:
+  full_gcl:
+    primary_mechanism_comparison: false
+    guaranteed_models:
+      - clip_vit_l14
+      - vista_stage1
+    purpose:
+      - align_with_prior_gcl_results
+      - implementation_reference
+    count_matched: false
+
+unresolved_training_hyperparameters:
+  - learning_rate
+  - global_batch_size
+  - gradient_accumulation
+  - training_steps
+  - warmup
+  - checkpoint_interval
+  - multi_seed

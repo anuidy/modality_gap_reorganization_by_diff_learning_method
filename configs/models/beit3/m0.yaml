@@ -1,0 +1,11 @@
+model:
+  name: beit3_base_itc_patch16_224
+  adapter: beit3_base_itc_adapter
+  architecture: unified_multiway_transformer
+
+m0:
+  checkpoint: data/raw/models/beit3/beit3_base_itc_patch16_224.pth
+  sentencepiece_model: data/raw/models/beit3/beit3.spm
+  output: raw_retrieval_head_pre_l2
+  image_preprocess: official_beit3_retrieval_eval_transform_224
+  text_max_bpe_tokens: 64

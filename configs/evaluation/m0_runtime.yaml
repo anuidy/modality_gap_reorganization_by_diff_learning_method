@@ -1,0 +1,17 @@
+runtime:
+  conda_environment: modality-gap
+  device: cuda
+  inference_mode: true
+  stored_embedding_dtype: float32
+
+official_implementations:
+  clip: openai/CLIP
+  vista: FlagOpen/FlagEmbedding research/visual_bge
+  albef: salesforce/ALBEF model_pretrain
+  beit3: microsoft/unilm beit3
+
+required_packages:
+  clip: "1.0"
+  torchscale: "0.2.0"
+  torchmetrics: "0.7.3"
+  tensorboardX: "2.6.5"

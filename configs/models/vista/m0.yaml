@@ -1,0 +1,11 @@
+model:
+  name: vista_base
+  adapter: vista_stage1_adapter
+  architecture: joint_encoder
+
+m0:
+  checkpoint: data/raw/models/vista/BGE_EVA_Token_S1.pth
+  text_backbone: data/raw/models/vista/bge-base-en-v1.5
+  output: raw_pre_l2
+  image_preprocess: official_visualized_bge_preprocess_val
+  text_max_tokens: 512

@@ -1,0 +1,15 @@
+model:
+  name: vista_base
+  architecture: joint_encoder
+
+checkpoint:
+  stage: stage1
+  filename: BGE_EVA_Token_S1.pth
+  path: data/raw/models/vista/BGE_EVA_Token_S1.pth
+  source: JUNJIE99/VISTA
+  source_url: https://huggingface.co/JUNJIE99/VISTA/resolve/main/BGE_EVA_Token_S1.pth?download=true
+  sha256: 05a4ce3033d52f96032c2cb79958b361ea9f378aa4dac44069476b433d7281cf
+
+pretraining_history:
+  vista_stage1: true
+  vista_stage2_mixed_training: false

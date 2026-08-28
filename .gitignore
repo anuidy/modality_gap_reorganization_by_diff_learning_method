@@ -1,0 +1,20 @@
+# Generated experiment artifacts and large local assets
+outputs/
+data/raw/
+data/processed/
+checkpoints/
+wandb/
+third_party/
+
+# Python caches and virtual environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
