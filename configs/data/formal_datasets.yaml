@@ -1,0 +1,40 @@
+schema_version: 1
+status: split_rules_frozen
+
+lcs_558k:
+  source_annotation: data/raw/lcs_558k/blip_laion_cc_sbu_558k.json
+  source_annotation_sha256: fe0a999808f30dba5067297a1283d0937a0f519101298ad639d178d8564dfcd6
+  source_sample_count: 558128
+  training_image_root: data/raw/lcs_558k/images
+  probe_image_root: data/raw/lcs_558k/images
+  split:
+    train_manifest: data/processed/lcs_558k/manifests/train_v1.jsonl
+    validation_manifest: data/processed/lcs_558k/manifests/validation_v1.jsonl
+    split_lock: data/splits/lcs_558k_split_lock_v1.json
+    split_lock_sha256: 2e4f3cb62be0e2c6737dfdb2b6136c96ade8565b326a65cefa96d942cddf9f1e
+    validation_count: 8000
+    validation_seed: 20260825
+  in_domain_probe:
+    manifest: data/splits/lcs_558k_in_domain_probe_v1.json
+    manifest_sha256: 3895e647e218d8565dc51841c5de7cc57079568dcc8b69d33d2e5e08bd4f9aa1
+    sample_count: 10000
+    seed: 20260825
+    role: representation_metrics_only
+
+coco_2017_val:
+  captions_annotation: data/raw/coco_2017_val/extracted/annotations/captions_val2017.json
+  captions_annotation_sha256: afe3b30e403dd7f228e2373023abbd60042a6e10ec6874d3652df034d289ebb9
+  image_root: data/raw/coco_2017_val/extracted/val2017
+  external_probe:
+    manifest: data/splits/coco_2017_val_probe_v1.json
+    manifest_sha256: d8133889432c37f3a436b7dcff769f87cf9b35eb6ea49a6fba00e7c32d129f85
+    sample_count: 5000
+    caption_selection: minimum_caption_id_per_image
+    role: representation_metrics_only
+
+controls:
+  train_role: parameter_updates_only
+  validation_role: training_monitoring_only_no_checkpoint_selection
+  probe_role: representation_metrics_only_no_tuning
+  branch_resampling_forbidden: true
+  model_specific_resplitting_forbidden: true

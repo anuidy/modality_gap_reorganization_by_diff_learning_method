@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "dataset": "lcs_558k",
+  "source": {
+    "annotation": "data/raw/lcs_558k/blip_laion_cc_sbu_558k.json",
+    "sha256": "fe0a999808f30dba5067297a1283d0937a0f519101298ad639d178d8564dfcd6",
+    "sample_count": 558128
+  },
+  "split_algorithm": {
+    "probe": {
+      "status": "preexisting_frozen_manifest",
+      "method": "random.sample",
+      "seed": 20260825,
+      "count": 10000
+    },
+    "validation": {
+      "method": "sha256_rank(lcs_558k.validation.v1:seed:source_index)",
+      "seed": 20260825,
+      "count": 8000
+    },
+    "train": {
+      "method": "source_order_complement_of_validation_and_probe"
+    }
+  },
+  "splits": {
+    "train": {
+      "role": "parameter_updates_only",
+      "manifest": "data/processed/lcs_558k/manifests/train_v1.jsonl",
+      "sha256": "e25de59aedd14edb460874c70ed62426d1ffe1c380f46461c5d331b335898190",
+      "sample_count": 540128
+    },
+    "validation": {
+      "role": "training_monitoring_only_no_checkpoint_selection",
+      "manifest": "data/processed/lcs_558k/manifests/validation_v1.jsonl",
+      "sha256": "9b4727f88c8ec613a18791813401832cd8829b08b3fff0dbf61dbccec52110c2",
+      "sample_count": 8000
+    },
+    "in_domain_probe": {
+      "role": "representation_metrics_only",
+      "manifest": "data/splits/lcs_558k_in_domain_probe_v1.json",
+      "sha256": "3895e647e218d8565dc51841c5de7cc57079568dcc8b69d33d2e5e08bd4f9aa1",
+      "sample_count": 10000
+    }
+  },
+  "invariants": {
+    "pairwise_disjoint": true,
+    "exhaustive_over_source": true,
+    "branch_resampling_forbidden": true,
+    "probe_checkpoint_selection_forbidden": true
+  }
+}

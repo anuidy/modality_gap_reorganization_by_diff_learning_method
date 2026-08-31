@@ -1,4 +1,4 @@
-# ALBEF原生训练对照确定改动日志
+# ALBEF Native Training Comparison Definition Change Log（ALBEF原生训练对照确定改动日志）
 
 ## 1. 改动类型
 
@@ -10,7 +10,7 @@
 ## 2. 改动位置
 
 - `configs/training/experiment_comparisons.yaml`
-- `change_logs/训练方案设计/ALBEF原生训练对照确定改动日志.md`
+- `change_logs/Training Plan Design（训练方案设计）/ALBEF Native Training Comparison Definition Change Log（ALBEF原生训练对照确定改动日志）.md`
 
 ## 3. 改动逻辑
 

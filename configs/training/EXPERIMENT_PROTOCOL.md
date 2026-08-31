@@ -15,6 +15,7 @@ M0 → Count-Matched Mixed CL
 - Count-Matched Mixed 按 `I↔T → I↔IT → T↔IT` 轮换。
 - 两条分支匹配每 step positive supervision 数和每 query negative 数。
 - 同一 semantic instance 的其他 representation 不得作为 negative。
+- 每个 query 恰有 1 个 positive；其余 N-1 个 candidates 只来自当前 relation 的 target modality。
 
 `e_IT` 规则：
 
@@ -52,4 +53,3 @@ Full ALBEF 是 native objective/cross-attention intervention，不等价于前�
 - training steps
 - checkpoint interval
 - multi-seed
-- Mixed negative modality ratio

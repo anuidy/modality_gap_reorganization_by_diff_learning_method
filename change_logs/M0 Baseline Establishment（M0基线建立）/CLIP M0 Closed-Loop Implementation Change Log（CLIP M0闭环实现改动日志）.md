@@ -1,4 +1,4 @@
-# CLIP M0闭环实现改动日志
+# CLIP M0 Closed-Loop Implementation Change Log（CLIP M0闭环实现改动日志）
 
 ## 1. 改动类型
 

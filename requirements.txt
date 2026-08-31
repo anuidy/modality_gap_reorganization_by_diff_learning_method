@@ -1,0 +1,65 @@
+# Project dependencies for local preparation and AutoDL training
+#
+# Selection policy:
+# - This is a curated project specification, not a freeze of any local machine.
+# - Direct imports and fragile upstream APIs are constrained here.
+# - A complete transitive lock file will be generated only after the AutoDL
+#   smoke test and pilot validate this stack on the target A800 server.
+#
+# System prerequisites (not installed by pip):
+# - Linux x86_64; Ubuntu 20.04+ (22.04 recommended)
+# - Python 3.10
+# - NVIDIA A800 80 GB or another Ampere GPU with BF16 support
+# - NVIDIA driver >= 570.26 for the CUDA 12.8 wheel
+# - Git, for the pinned OpenAI CLIP dependency and official source checkouts
+#
+# Install the CUDA build of PyTorch before installing this file:
+#   python -m pip install torch==2.7.1 torchvision==0.22.1 \
+#     --index-url https://download.pytorch.org/whl/cu128
+# Then install the remaining project dependencies:
+#   python -m pip install -r requirements.txt
+#
+# Official source trees required later under third_party/ are not pip packages.
+# The server bootstrap script will clone and checkout these project revisions:
+# - FlagOpen/FlagEmbedding: fd1a2bdf69488ffebe0327999d4400d8c8058a0b
+# - salesforce/ALBEF: b9727e43c3040491774d1b22cc27718aa7772fac
+# - microsoft/unilm: 833df7e7832e5064a281131ee64a481afa8e5b95
+
+# Packaging support. BEiT-3 imports torchmetrics 0.7.3, which still relies on
+# pkg_resources, so setuptools must remain below the removal release.
+setuptools>=68,<81
+wheel>=0.43
+packaging>=23
+
+# GPU framework. The CUDA variant is selected by the separate command above.
+torch==2.7.1
+torchvision==0.22.1
+
+# Direct project utilities
+numpy>=1.26,<2
+Pillow>=10,<12
+PyYAML>=6,<7
+requests>=2.31,<3
+tqdm>=4.66,<5
+
+# Tokenizers, model loading, and checkpoint serialization
+transformers>=4.44.2,<5
+safetensors>=0.4,<1
+sentencepiece>=0.1.99,<0.3
+
+# Official CLIP, VISTA, ALBEF, and BEiT-3 compatibility
+timm==0.4.12
+einops>=0.7,<1
+ftfy>=6.1,<7
+regex>=2023.10.3
+torchscale==0.2.0
+fairscale==0.4.0
+torchmetrics==0.7.3
+tensorboardX>=2.6,<3
+
+# Official OpenAI CLIP source, pinned to an immutable upstream commit
+clip @ git+https://github.com/openai/CLIP.git@d05afc436d78f1c48dc0dbf8e5980a9d471f35f6
+
+# Intentionally excluded until code or the AutoDL pilot proves they are needed:
+# deepspeed, flash-attn, xformers, apex, datasets, accelerate, scipy, pandas,
+# scikit-learn, opencv-python, pyarrow, pycocotools, and pycocoevalcap.

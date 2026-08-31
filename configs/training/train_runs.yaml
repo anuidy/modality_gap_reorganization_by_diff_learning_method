@@ -1,0 +1,152 @@
+schema_version: 1
+status: requires_data_and_hyperparameter_freeze
+
+# These values intentionally remain null until the formal pilot protocol is
+# approved. The loader refuses to train with an unresolved value.
+controls:
+  seed: null
+  deterministic: true
+  precision: bf16
+  data:
+    dataset_name: lcs_558k
+    dataset_spec: configs/data/formal_datasets.yaml
+    split_lock: data/splits/lcs_558k_split_lock_v1.json
+    split_lock_sha256: 2e4f3cb62be0e2c6737dfdb2b6136c96ade8565b326a65cefa96d942cddf9f1e
+    train_manifest: data/processed/lcs_558k/manifests/train_v1.jsonl
+    train_manifest_sha256: e25de59aedd14edb460874c70ed62426d1ffe1c380f46461c5d331b335898190
+    validation_manifest: data/processed/lcs_558k/manifests/validation_v1.jsonl
+    validation_manifest_sha256: 9b4727f88c8ec613a18791813401832cd8829b08b3fff0dbf61dbccec52110c2
+    validation_sample_count: 8000
+    image_root: data/raw/lcs_558k/images
+    lcs_probe_manifest: data/splits/lcs_558k_in_domain_probe_v1.json
+    lcs_probe_manifest_sha256: 3895e647e218d8565dc51841c5de7cc57079568dcc8b69d33d2e5e08bd4f9aa1
+    coco_probe_manifest: data/splits/coco_2017_val_probe_v1.json
+    coco_probe_manifest_sha256: d8133889432c37f3a436b7dcff769f87cf9b35eb6ea49a6fba00e7c32d129f85
+    num_workers: 8
+  optimizer:
+    type: null
+    learning_rate: null
+    weight_decay: null
+    beta1: 0.9
+    beta2: 0.999
+    epsilon: 1.0e-8
+    gradient_clip_norm: 1.0
+  scheduler:
+    type: null
+    warmup_steps: null
+    min_lr_ratio: null
+  budget:
+    max_steps: null
+    checkpoint_interval: null
+    log_interval: 10
+
+models:
+  clip:
+    trainable_scope: full_parameter
+    checkpoint: data/raw/models/clip_sf/ViT-L-14.pt
+    checkpoint_sha256: b8cca3fd41ae0c99ba7e8951adf17d267cdb84cd88be6f7c2e0eca1737a03836
+    resources: {}
+    batch:
+      micro_batch_size: null
+      gradient_accumulation: null
+    augmentation:
+      name: null
+      scale_min: null
+      scale_max: null
+      horizontal_flip_probability: null
+    options:
+      image_size: 224
+      max_text_tokens: 77
+
+  vista:
+    trainable_scope: full_parameter
+    checkpoint: data/raw/models/vista/BGE_EVA_Token_S1.pth
+    checkpoint_sha256: 05a4ce3033d52f96032c2cb79958b361ea9f378aa4dac44069476b433d7281cf
+    resources:
+      text_backbone: data/raw/models/vista/bge-base-en-v1.5
+    batch:
+      micro_batch_size: null
+      gradient_accumulation: null
+    augmentation:
+      name: null
+      scale_min: null
+      scale_max: null
+      horizontal_flip_probability: null
+    options:
+      image_size: 224
+      max_text_tokens: 64
+      temperature: 0.02
+
+  beit3:
+    trainable_scope: full_parameter
+    checkpoint: data/raw/models/beit3/beit3_base_itc_patch16_224.pth
+    checkpoint_sha256: d483a41d92b9aea7ef87d17551413b8c22faae927110666b01ac3aa7a199a25b
+    resources:
+      sentencepiece_model: data/raw/models/beit3/beit3.spm
+    batch:
+      micro_batch_size: null
+      gradient_accumulation: null
+    augmentation:
+      name: null
+      scale_min: null
+      scale_max: null
+      horizontal_flip_probability: null
+    options:
+      image_size: 224
+      max_text_tokens: 64
+
+  albef:
+    trainable_scope: full_parameter
+    checkpoint: data/raw/models/albef/ALBEF_14M.pth
+    checkpoint_sha256: 41c106161c9eb1a950260a2773995af67917ee8887bfb2a46a2e2aeed92fb2c7
+    resources:
+      text_backbone: data/raw/models/albef/bert-base-uncased
+    batch:
+      micro_batch_size: null
+      gradient_accumulation: null
+    augmentation:
+      name: null
+      scale_min: null
+      scale_max: null
+      horizontal_flip_probability: null
+    options:
+      image_size: 256
+      max_text_tokens: 30
+      alpha: 0.4
+      alpha_warmup_steps: null
+      mlm_probability: 0.15
+      queue_size: 65536
+
+runs:
+  clip_standard:
+    model: clip
+    branch: standard
+    output_dir: outputs/training/clip_standard
+  clip_count_matched_mixed:
+    model: clip
+    branch: count_matched_mixed
+    output_dir: outputs/training/clip_count_matched_mixed
+  vista_standard:
+    model: vista
+    branch: standard
+    output_dir: outputs/training/vista_standard
+  vista_count_matched_mixed:
+    model: vista
+    branch: count_matched_mixed
+    output_dir: outputs/training/vista_count_matched_mixed
+  beit3_standard:
+    model: beit3
+    branch: standard
+    output_dir: outputs/training/beit3_standard
+  beit3_count_matched_mixed:
+    model: beit3
+    branch: count_matched_mixed
+    output_dir: outputs/training/beit3_count_matched_mixed
+  albef_itc_only:
+    model: albef
+    branch: itc_only
+    output_dir: outputs/training/albef_itc_only
+  albef_full:
+    model: albef
+    branch: full_albef
+    output_dir: outputs/training/albef_full

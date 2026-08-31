@@ -1,4 +1,4 @@
-# 最终实验矩阵冻结改动日志
+# Final Experiment Matrix Freeze Change Log（最终实验矩阵冻结改动日志）
 
 ## 1. 改动类型
 
@@ -11,7 +11,7 @@
 
 - `configs/training/experiment_comparisons.yaml`
 - `configs/training/EXPERIMENT_PROTOCOL.md`
-- `change_logs/训练方案设计/最终实验矩阵冻结改动日志.md`
+- `change_logs/Training Plan Design（训练方案设计）/Final Experiment Matrix Freeze Change Log（最终实验矩阵冻结改动日志）.md`
 
 ## 3. 改动逻辑
 

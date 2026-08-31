@@ -4,13 +4,13 @@
 
 当前阶段目录：
 
-- `项目初始化与资源准备/`：项目骨架、数据/权重准备与初始化 checkpoint 修正。
-- `M0基线建立/`：M0 adapter、embedding extraction、指标与基线结果。
-- `训练方案设计/`：训练 intervention、分支定义、控制变量与正式训练前决策。
+- `Project Initialization and Resource Preparation（项目初始化与资源准备）/`：项目骨架、数据/权重准备与初始化 checkpoint 修正。
+- `M0 Baseline Establishment（M0基线建立）/`：M0 adapter、embedding extraction、指标与基线结果。
+- `Training Plan Design（训练方案设计）/`：训练 intervention、分支定义、控制变量与正式训练前决策。
 
 日志文件以实际改动内容命名，格式为：
 
-`实际内容改动日志.md`
+`English Change Log（中文改动日志）.md`
 
 每份日志固定说明四项内容：
 

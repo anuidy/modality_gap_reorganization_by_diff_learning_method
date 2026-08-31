@@ -50,6 +50,8 @@ comparison_families:
           - T_bidirectional_IT
         positive_supervision_count_matched: true
         negative_count_per_query_matched: true
+        one_positive_per_query: true
+        candidate_pool: current_relation_target_modality_only
         same_semantic_instance_excluded_from_negatives: true
     e_IT_rules:
       clip_vit_l14:

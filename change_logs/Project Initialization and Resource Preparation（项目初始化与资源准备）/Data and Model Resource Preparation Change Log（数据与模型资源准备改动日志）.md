@@ -1,4 +1,4 @@
-# 数据与模型资源准备改动日志
+# Data and Model Resource Preparation Change Log（数据与模型资源准备改动日志）
 
 ## 1. 改动类型
 

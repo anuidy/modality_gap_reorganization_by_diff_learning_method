@@ -1,4 +1,4 @@
-# VISTA Stage-1检查点修正改动日志
+# VISTA Stage-1 Checkpoint Correction Change Log（VISTA Stage-1检查点修正改动日志）
 
 ## 1. 改动类型
 
