@@ -33,6 +33,7 @@ from objectives.contrastive import (
     relation_for_optimizer_step,
     standard_objective,
 )
+from training.albef_accumulation import DeferredAlbefStateUpdates
 
 
 CLIP_MEAN = (0.48145466, 0.4578275, 0.40821073)
@@ -148,8 +149,25 @@ class TrainingBackend(nn.Module, ABC):
     def forward(self, batch: PreparedBatch, branch: str, optimizer_step: int) -> TrainingStepResult:
         raise NotImplementedError
 
+    def begin_optimizer_step(self, micro_batches: int) -> None:
+        """Open one gradient-accumulation window."""
+        del micro_batches
+
+    def before_optimizer_step(self) -> None:
+        """Flush state derived from all accumulated micro-batches."""
+
     def after_optimizer_step(self) -> None:
         """Apply model-specific post-update constraints."""
+
+    def no_weight_decay_parameter_names(self) -> set[str]:
+        """Return backend-qualified parameter names excluded by the model itself."""
+
+        model = getattr(self, "model", None)
+        provider = getattr(model, "no_weight_decay", None)
+        if not callable(provider):
+            return set()
+        model_names = {str(name) for name in (provider() or ())}
+        return model_names | {f"model.{name}" for name in model_names}
 
     def parameter_counts(self) -> dict[str, int]:
         return {
@@ -385,6 +403,19 @@ class Beit3TrainingBackend(TrainingBackend):
         with torch.no_grad():
             self.model.logit_scale.clamp_(max=math.log(100.0))
 
+    def no_weight_decay_parameter_names(self) -> set[str]:
+        names = super().no_weight_decay_parameter_names()
+        for name, _ in self.named_parameters():
+            if (
+                name.endswith("logit_scale")
+                or name.endswith("cls_token")
+                or name.endswith("mask_token")
+                or name.endswith("pos_embed")
+                or ".embed_positions." in name
+            ):
+                names.add(name)
+        return names
+
 
 @torch.no_grad()
 def _safe_concat_all_gather(tensor: torch.Tensor) -> torch.Tensor:
@@ -479,12 +510,27 @@ class AlbefTrainingBackend(TrainingBackend):
         self.model.__class__.forward.__globals__["concat_all_gather"] = _safe_concat_all_gather
         self.model.mask = types.MethodType(_device_safe_albef_mask, self.model)
         self.model.to(device)
+        self._deferred_state_updates = DeferredAlbefStateUpdates()
         self.max_text_tokens = int(options.get("max_text_tokens", 30))
         self.alpha = float(options.get("alpha", 0.4))
         self.alpha_warmup_steps = int(options.get("alpha_warmup_steps") or 0)
         self.preprocess = _build_train_transform(
             int(options.get("image_size", 256)), CLIP_MEAN, CLIP_STD, augmentation
         )
+
+    def begin_optimizer_step(self, micro_batches: int) -> None:
+        self._deferred_state_updates.begin(self.model, micro_batches)
+
+    def before_optimizer_step(self) -> None:
+        self._deferred_state_updates.flush(
+            lambda chunks: torch.cat(chunks, dim=0)
+        )
+
+    def after_optimizer_step(self) -> None:
+        if self._deferred_state_updates.active:
+            raise RuntimeError(
+                "ALBEF optimizer step completed before deferred queue updates were flushed."
+            )
 
     def prepare_batch(self, batch: RawTrainingBatch, augmentation_seed: int) -> PreparedBatch:
         with _seeded_augmentation(augmentation_seed):
@@ -552,14 +598,16 @@ class AlbefTrainingBackend(TrainingBackend):
     def forward(self, batch: PreparedBatch, branch: str, optimizer_step: int) -> TrainingStepResult:
         alpha = self._alpha_for_step(optimizer_step)
         if branch == "itc_only":
-            loss_itc = self._native_itc(batch.images, batch.text_tokens, alpha)
+            with self._deferred_state_updates.intercept_forward():
+                loss_itc = self._native_itc(batch.images, batch.text_tokens, alpha)
             return TrainingStepResult(
                 loss=loss_itc,
                 metrics={"loss": loss_itc, "loss/ITC": loss_itc},
                 audit=None,
             )
         if branch == "full_albef":
-            loss_mlm, loss_itc, loss_itm = self.model(batch.images, batch.text_tokens, alpha=alpha)
+            with self._deferred_state_updates.intercept_forward():
+                loss_mlm, loss_itc, loss_itm = self.model(batch.images, batch.text_tokens, alpha=alpha)
             loss = loss_itc + loss_itm + loss_mlm
             return TrainingStepResult(
                 loss=loss,

@@ -287,8 +287,13 @@ def load_run_config(
         "scale_max": scale_max,
         "horizontal_flip_probability": float(values["augmentation_hflip"]),
     }
-    if run["model"] == "albef" and 65536 % int(values["micro_batch_size"]) != 0:
-        raise ValueError("ALBEF micro_batch_size must divide its native queue size 65536.")
+    if run["model"] == "albef":
+        queue_size = int(_nested(model, "options", "queue_size") or 65536)
+        effective_batch_size = int(values["micro_batch_size"]) * int(values["gradient_accumulation"])
+        if queue_size % effective_batch_size != 0:
+            raise ValueError(
+                f"ALBEF effective_batch_size must divide its native queue_size {queue_size}."
+            )
 
     return RunConfig(
         run_id=run_id,

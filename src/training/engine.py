@@ -24,6 +24,7 @@ from datasets.training_pairs import (
 from training.backends import TrainingBackend, create_training_backend
 from training.config import RunConfig
 from training.data_control import validate_formal_data_identity
+from training.optim import build_weight_decay_parameter_groups
 from training.validation import run_validation
 
 
@@ -278,12 +279,17 @@ def run_training(
     trainable_parameters = [parameter for parameter in backend.parameters() if parameter.requires_grad]
     if not trainable_parameters:
         raise RuntimeError("The training backend exposed no trainable parameters.")
+    optimizer_parameter_groups = build_weight_decay_parameter_groups(
+        backend,
+        config.weight_decay,
+        backend.no_weight_decay_parameter_names(),
+    )
     optimizer = torch.optim.AdamW(
-        trainable_parameters,
+        optimizer_parameter_groups,
         lr=config.learning_rate,
         betas=(config.beta1, config.beta2),
         eps=config.epsilon,
-        weight_decay=config.weight_decay,
+        weight_decay=0.0,
     )
 
     train_manifest_sha256 = sha256_file(config.train_manifest)
@@ -364,6 +370,15 @@ def run_training(
             "config_sha256": _config_signature(config),
             "input_metadata": input_metadata,
             "parameter_counts": parameter_counts,
+            "optimizer_parameter_groups": [
+                {
+                    "group_name": str(group["group_name"]),
+                    "weight_decay": float(group["weight_decay"]),
+                    "parameter_tensor_count": len(group["params"]),
+                    "parameter_count": sum(parameter.numel() for parameter in group["params"]),
+                }
+                for group in optimizer.param_groups
+            ],
             "trainable_parameter_name_sha256": _trainable_signature(backend),
             "control_guarantees": {
                 "fresh_m0_initialization": resume_checkpoint is None,
@@ -371,6 +386,7 @@ def run_training(
                 "stateless_per_microbatch_model_rng_seed": True,
                 "relation_cycle_unit": "optimizer_step",
                 "single_gpu_in_batch_negatives": True,
+                "albef_state_updates_per_optimizer_step": True,
                 "validation_interval_equals_checkpoint_interval": True,
                 "validation_parameter_updates": False,
                 "validation_checkpoint_selection": False,
@@ -387,6 +403,7 @@ def run_training(
         for parameter_group in optimizer.param_groups:
             parameter_group["lr"] = learning_rate
         optimizer.zero_grad(set_to_none=True)
+        backend.begin_optimizer_step(config.gradient_accumulation)
         accumulated: dict[str, float] = {}
         audits: list[dict[str, Any]] = []
 
@@ -412,6 +429,7 @@ def run_training(
             if result.audit is not None:
                 audits.append(dataclasses.asdict(result.audit))
 
+        backend.before_optimizer_step()
         relation_audit = None
         if audits:
             if len({audit["relation"] for audit in audits}) != 1:
