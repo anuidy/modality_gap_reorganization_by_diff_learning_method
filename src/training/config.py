@@ -6,6 +6,8 @@ from typing import Any, Mapping
 
 import yaml
 
+from training.checkpoint_plan import build_checkpoint_plan
+
 
 EXPECTED_RUNS: dict[str, tuple[str, str]] = {
     "clip_standard": ("clip", "standard"),
@@ -48,7 +50,9 @@ class RunConfig:
     warmup_steps: int
     min_lr_ratio: float
     max_steps: int
-    checkpoint_interval: int
+    trajectory_progress_fractions: tuple[float, ...]
+    resume_progress_interval: float
+    resume_retention: int
     log_interval: int
     gradient_clip_norm: float | None
     augmentation: Mapping[str, Any]
@@ -148,6 +152,9 @@ def load_run_config(
     model = payload["models"][run["model"]]
     controls = payload["controls"]
     supplied = dict(overrides or {})
+    checkpointing = controls.get("checkpointing")
+    if not isinstance(checkpointing, Mapping):
+        raise ValueError("Training config requires a controls.checkpointing mapping.")
 
     def choose(name: str, value: Any) -> Any:
         return supplied[name] if name in supplied and supplied[name] is not None else value
@@ -204,8 +211,14 @@ def load_run_config(
         "warmup_steps": choose("warmup_steps", model_control("scheduler", "warmup_steps")),
         "min_lr_ratio": choose("min_lr_ratio", model_control("scheduler", "min_lr_ratio")),
         "max_steps": choose("max_steps", model_control("budget", "max_steps")),
-        "checkpoint_interval": choose(
-            "checkpoint_interval", model_control("budget", "checkpoint_interval")
+        "trajectory_progress_fractions": choose(
+            "trajectory_progress_fractions", checkpointing.get("trajectory_progress_fractions")
+        ),
+        "resume_progress_interval": choose(
+            "resume_progress_interval", checkpointing.get("resume_progress_interval")
+        ),
+        "resume_retention": choose(
+            "resume_retention", checkpointing.get("resume_retention")
         ),
         "augmentation_name": choose("augmentation_name", _nested(model, "augmentation", "name")),
         "augmentation_scale_min": choose(
@@ -224,7 +237,6 @@ def load_run_config(
         "micro_batch_size",
         "gradient_accumulation",
         "max_steps",
-        "checkpoint_interval",
     )
     for name in integer_positive:
         if not isinstance(values[name], int) or values[name] <= 0:
@@ -235,6 +247,23 @@ def load_run_config(
         raise ValueError("warmup_steps must be a non-negative integer.")
     if values["warmup_steps"] >= values["max_steps"]:
         raise ValueError("warmup_steps must be smaller than max_steps.")
+    try:
+        trajectory_progress_fractions = tuple(
+            float(fraction) for fraction in values["trajectory_progress_fractions"]
+        )
+    except (TypeError, ValueError) as error:
+        raise ValueError("trajectory_progress_fractions must be a numeric sequence.") from error
+    try:
+        resume_progress_interval = float(values["resume_progress_interval"])
+        resume_retention = int(values["resume_retention"])
+    except (TypeError, ValueError) as error:
+        raise ValueError("resume checkpoint settings must be numeric.") from error
+    build_checkpoint_plan(
+        max_steps=int(values["max_steps"]),
+        trajectory_progress_fractions=trajectory_progress_fractions,
+        resume_progress_interval=resume_progress_interval,
+        resume_retention=resume_retention,
+    )
     if values["optimizer_type"] != "adamw":
         raise ValueError("The current training engine supports optimizer.type=adamw.")
     if values["scheduler_type"] != "cosine":
@@ -321,7 +350,9 @@ def load_run_config(
         warmup_steps=int(values["warmup_steps"]),
         min_lr_ratio=float(values["min_lr_ratio"]),
         max_steps=int(values["max_steps"]),
-        checkpoint_interval=int(values["checkpoint_interval"]),
+        trajectory_progress_fractions=trajectory_progress_fractions,
+        resume_progress_interval=resume_progress_interval,
+        resume_retention=resume_retention,
         log_interval=log_interval,
         gradient_clip_norm=(float(gradient_clip_norm) if gradient_clip_norm is not None else None),
         augmentation=augmentation,

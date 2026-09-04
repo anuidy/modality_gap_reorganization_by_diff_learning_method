@@ -46,7 +46,7 @@ class ValidationIntegrationBackend(TrainingBackend):
 
 
 class ValidationEngineIntegrationTest(unittest.TestCase):
-    def test_checkpoint_interval_and_final_step_write_read_only_validation_logs(self):
+    def test_resume_checkpoint_steps_write_read_only_validation_logs(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             checkpoint = root / "m0.pt"
@@ -95,7 +95,9 @@ class ValidationEngineIntegrationTest(unittest.TestCase):
                 warmup_steps=1,
                 min_lr_ratio=0.1,
                 max_steps=3,
-                checkpoint_interval=2,
+                trajectory_progress_fractions=(1 / 3, 2 / 3, 1.0),
+                resume_progress_interval=2 / 3,
+                resume_retention=2,
                 log_interval=1,
                 gradient_clip_norm=1.0,
                 augmentation={},

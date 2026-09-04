@@ -111,5 +111,5 @@ unresolved_training_hyperparameters:
   - gradient_accumulation
   - training_steps
   - warmup
-  - checkpoint_interval
+  - resume_checkpoint_progress_interval_after_pilot
   - multi_seed

@@ -9,9 +9,9 @@
 
 ## 执行频率
 
-- 每次保存周期 checkpoint 后运行一次 Validation。
-- Validation interval 与 `checkpoint_interval` 相同，不增加新的自由超参数。
-- 如果最后一个 optimizer step 不是 checkpoint interval 的整数倍，则在最终 checkpoint 后额外运行一次。
+- 每次保存完整 resume checkpoint 后运行一次 Validation。当前 Pilot 候选 resume interval 为 20%，对应 20%、40%、60%、80% 与 100%；正式训练前随 resume interval 一并重新确认。
+- 1%、5%、20%、50% 的 trajectory model-only snapshot 不触发 Validation；它们保留给 branch 完成后的 representation-metric 批量评测。
+- 100% 的 final full checkpoint 总会触发一次最终 Validation。
 - 所有结果写入每个 run 的 `validation_metrics.jsonl`。
 
 ## 公共指标

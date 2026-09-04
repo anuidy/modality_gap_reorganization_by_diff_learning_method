@@ -37,8 +37,12 @@ controls:
     min_lr_ratio: null
   budget:
     max_steps: null
-    checkpoint_interval: null
     log_interval: 10
+  checkpointing:
+    trajectory_progress_fractions: [0.01, 0.05, 0.20, 0.50, 1.00]
+    # Pilot candidate; re-freeze before formal training begins.
+    resume_progress_interval: 0.20
+    resume_retention: 2
 
 models:
   clip:

@@ -34,7 +34,6 @@ class ModelControlConfigTest(unittest.TestCase):
                 "warmup_steps": 10,
                 "min_lr_ratio": 0.1,
                 "max_steps": 100,
-                "checkpoint_interval": 25,
                 "augmentation_name": "random_resized_crop",
                 "augmentation_scale_min": 0.8,
                 "augmentation_scale_max": 1.0,

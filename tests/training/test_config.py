@@ -38,7 +38,6 @@ class TrainingConfigTest(unittest.TestCase):
             "warmup_steps": 10,
             "min_lr_ratio": 0.1,
             "max_steps": 100,
-            "checkpoint_interval": 25,
             "augmentation_name": "random_resized_crop",
             "augmentation_scale_min": 0.8,
             "augmentation_scale_max": 1.0,
@@ -48,6 +47,9 @@ class TrainingConfigTest(unittest.TestCase):
         self.assertEqual(config.model_name, "clip")
         self.assertEqual(config.branch, "count_matched_mixed")
         self.assertEqual(config.effective_batch_size, 16)
+        self.assertEqual(config.trajectory_progress_fractions, (0.01, 0.05, 0.20, 0.50, 1.00))
+        self.assertEqual(config.resume_progress_interval, 0.20)
+        self.assertEqual(config.resume_retention, 2)
 
     def test_run_cannot_override_a_controlled_field(self):
         payload = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8"))

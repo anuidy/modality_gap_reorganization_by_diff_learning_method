@@ -99,4 +99,4 @@ python scripts/data/prepare_formal_datasets.py --validate-only --verify-images
 
 `configs/training/train_runs.yaml` 已锁定 Train、Validation、两套 Probe 和 split lock 的路径及 SHA。训练启动前会验证这些身份；文件被修改、不同分支换用其他 Train 清单、或把 Probe 路径换成 Train 路径时都会失败。
 
-训练引擎只从 LCS Train 创建参数更新 DataLoader，因此 Probe 不可能进入梯度更新。固定 Validation 8K 使用独立 DataLoader，在每个 `checkpoint_interval` 和最终 checkpoint 上以只读方式运行，结果写入 `validation_metrics.jsonl`。所有分支报告公共指标，Mixed/Full 额外报告分支诊断；Validation 始终不用于选择 checkpoint。完整定义见 `configs/training/VALIDATION_PROTOCOL.md`。
+训练引擎只从 LCS Train 创建参数更新 DataLoader，因此 Probe 不可能进入梯度更新。固定 Validation 8K 使用独立 DataLoader，在每个完整 resume checkpoint 后以只读方式运行，结果写入 `validation_metrics.jsonl`。当前 Pilot 候选 interval 为 20%、40%、60%、80%、100%，正式 interval 在 Pilot 后重新确认。所有分支报告公共指标，Mixed/Full 额外报告分支诊断；Validation 始终不用于选择 checkpoint。完整定义见 `configs/training/VALIDATION_PROTOCOL.md`。

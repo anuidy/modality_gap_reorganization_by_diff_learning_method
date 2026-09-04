@@ -44,6 +44,16 @@ Full ALBEF 是 native objective/cross-attention intervention，不等价于前�
 - Raw absolute value 不作为跨架构优劣结论。
 - Full GCL 仅作为 CLIP/VISTA 的 reference，不属于主要 count-matched 机制对照。
 
+## Checkpoint 与几何轨迹协议
+
+- M0 是 0% 轨迹基线；不复制或重新保存 M0 checkpoint。
+- 每个正式 branch 在训练后的 `1% → 5% → 20% → 50% → 100%` optimizer progress 保存几何轨迹样本。
+- `1%`、`5%`、`20%`、`50%` 保存 model-only trajectory snapshot；它们只用于训练后批量提取 `e_I/e_T` 和几何指标，不可用于精确 resume。
+- 当前 Pilot 候选方案为每 20% progress 保存完整 resume checkpoint；完整 checkpoint 含 model、optimizer、RNG 与 data-stream state，运行中只保留最新两份。Pilot 后可在正式训练开始前重新冻结 resume progress interval。
+- 100% 保存的 final full resume checkpoint 同时是最终轨迹点、最终评测输入和永久保留的 branch 结果。
+- 每个轨迹点均使用固定 COCO 5K、LCS 10K、pair indices 与 kNN reference；指标仅作观察性记录，不参与 early stopping、学习率调整或 checkpoint selection。
+- Full GCL 后续使用同一轨迹规则，但独立从对应 M0 checkpoint 初始化。
+
 ## 尚未冻结
 
 - learning rate
@@ -51,5 +61,5 @@ Full ALBEF 是 native objective/cross-attention intervention，不等价于前�
 - gradient accumulation
 - warmup / scheduler
 - training steps
-- checkpoint interval
+- resume checkpoint progress interval after Pilot
 - multi-seed

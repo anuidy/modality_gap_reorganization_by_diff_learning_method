@@ -99,7 +99,9 @@ class TrainingEngineTest(unittest.TestCase):
                 warmup_steps=1,
                 min_lr_ratio=0.1,
                 max_steps=3,
-                checkpoint_interval=2,
+                trajectory_progress_fractions=(1 / 3, 2 / 3, 1.0),
+                resume_progress_interval=1 / 3,
+                resume_retention=2,
                 log_interval=1,
                 gradient_clip_norm=1.0,
                 augmentation={},
@@ -126,7 +128,25 @@ class TrainingEngineTest(unittest.TestCase):
             )
             self.assertLess(float(backend.weight.detach()), 1.0)
 
-            periodic_checkpoint = config.output_dir / "checkpoints" / "step_00000002.pt"
+            periodic_checkpoint = config.output_dir / "checkpoints" / "resume" / "step_00000002.pt"
+            self.assertTrue(
+                (config.output_dir / "checkpoints" / "trajectory" / "step_00000001_p033_model.pt")
+                .is_file()
+            )
+            self.assertTrue(
+                (config.output_dir / "checkpoints" / "trajectory" / "step_00000002_p067_model.pt")
+                .is_file()
+            )
+            self.assertTrue((config.output_dir / "checkpoints" / "final.json").is_file())
+            self.assertEqual(
+                sorted(path.name for path in (config.output_dir / "checkpoints" / "resume").glob("step_*.pt")),
+                ["step_00000002.pt", "step_00000003.pt"],
+            )
+            final_metadata = json.loads(
+                (config.output_dir / "checkpoints" / "final.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(final_metadata["provenance"]["evaluation"]["status"], "pending")
+            self.assertEqual(final_metadata["provenance"]["m0_checkpoint_sha256"], config.checkpoint_sha256)
             with mock.patch(
                 "training.engine.create_training_backend", return_value=FakeBackend()
             ):

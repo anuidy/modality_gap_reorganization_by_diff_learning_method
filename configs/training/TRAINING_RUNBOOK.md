@@ -31,7 +31,7 @@
 - optimizer、learning rate、weight decay；
 - scheduler、warmup、minimum LR ratio；
 - 每个模型的 micro-batch 与 gradient accumulation；
-- max steps 与 checkpoint interval；
+- max steps；trajectory progress 与 resume retention 已固定；当前 20% resume interval 在 Pilot 后重新确认；
 - 每个模型的 augmentation。
 
 顶层 `controls` 是四个模型共同的默认值。若不同模型需要不同优化设置，可在对应 `models.<model>` 下增加 `optimizer`、`scheduler` 或 `budget`；同一个模型的两个分支仍从同一个 model block 读取，因此不能在 run 层改变控制变量。
@@ -60,8 +60,10 @@ python -u scripts/training/train.py --run clip_standard
 ```bash
 python -u scripts/training/train.py \
   --run clip_standard \
-  --resume outputs/training/clip_standard/checkpoints/step_00001000.pt
+  --resume outputs/training/clip_standard/checkpoints/resume/step_00001000.pt
 ```
+
+每个 run 的 `checkpoints/resume/latest.json` 会指向最新可恢复的完整 checkpoint；运行中只保留最新两份完整 resume state。训练进度 1%、5%、20%、50% 另存 model-only trajectory snapshot，100% 的 final full checkpoint 同时是最终轨迹点和评测输入。轨迹表示评测在 branch 完成后批量运行，不在训练中改变模型状态。
 
 全部 8 个分支顺序执行：
 

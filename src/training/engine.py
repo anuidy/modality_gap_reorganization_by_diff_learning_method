@@ -7,6 +7,7 @@ import json
 import math
 import os
 import random
+import subprocess
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -22,13 +23,15 @@ from datasets.training_pairs import (
     load_training_pairs,
 )
 from training.backends import TrainingBackend, create_training_backend
+from training.checkpoint_plan import TrajectoryPoint, build_checkpoint_plan
 from training.config import RunConfig
 from training.data_control import validate_formal_data_identity
 from training.optim import build_weight_decay_parameter_groups
 from training.validation import run_validation
 
 
-CHECKPOINT_SCHEMA_VERSION = 1
+CHECKPOINT_SCHEMA_VERSION = 2
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def sha256_file(path: Path) -> str:
@@ -219,21 +222,77 @@ def _append_jsonl(path: Path, payload: Any) -> None:
         handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 
-def _save_checkpoint(
+def _current_git_commit() -> str | None:
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=PROJECT_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    value = completed.stdout.strip()
+    return value or None
+
+
+def _checkpoint_provenance(
+    config: RunConfig,
+    completed_steps: int,
+    progress_fraction: float,
+    code_commit: str | None,
+    evaluation_status: str,
+) -> dict[str, Any]:
+    return {
+        "run_id": config.run_id,
+        "model_name": config.model_name,
+        "branch": config.branch,
+        "optimizer_step": completed_steps,
+        "progress_fraction": progress_fraction,
+        "m0_checkpoint_sha256": config.checkpoint_sha256,
+        "config_sha256": _config_signature(config),
+        "probe_manifests": {
+            "lcs": config.lcs_probe_manifest_sha256,
+            "coco": config.coco_probe_manifest_sha256,
+        },
+        "code_commit": code_commit,
+        "evaluation": {"status": evaluation_status},
+    }
+
+
+def _atomic_torch_save(payload: dict[str, Any], destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{destination.name}.tmp")
+    torch.save(payload, temporary)
+    temporary.replace(destination)
+
+
+def _append_checkpoint_index(output_directory: Path, payload: dict[str, Any]) -> None:
+    _append_jsonl(output_directory / "checkpoint_index.jsonl", payload)
+
+
+def _save_full_resume_checkpoint(
     output_directory: Path,
     config: RunConfig,
     backend: TrainingBackend,
     optimizer: torch.optim.Optimizer,
     completed_steps: int,
     stream: BatchStream,
-) -> Path:
-    checkpoint_directory = output_directory / "checkpoints"
-    checkpoint_directory.mkdir(parents=True, exist_ok=True)
+) -> tuple[Path, str]:
+    checkpoint_directory = output_directory / "checkpoints" / "resume"
     destination = checkpoint_directory / f"step_{completed_steps:08d}.pt"
-    temporary = checkpoint_directory / f".step_{completed_steps:08d}.tmp"
-    torch.save(
+    provenance = _checkpoint_provenance(
+        config,
+        completed_steps,
+        completed_steps / config.max_steps,
+        _current_git_commit(),
+        evaluation_status="not_applicable",
+    )
+    _atomic_torch_save(
         {
             "schema_version": CHECKPOINT_SCHEMA_VERSION,
+            "checkpoint_kind": "full_resume",
             "run_id": config.run_id,
             "config_sha256": _config_signature(config),
             "completed_steps": completed_steps,
@@ -241,15 +300,111 @@ def _save_checkpoint(
             "model": backend.state_dict(),
             "optimizer": optimizer.state_dict(),
             "rng": _rng_state(),
+            "provenance": provenance,
         },
-        temporary,
+        destination,
     )
-    temporary.replace(destination)
+    artifact_sha256 = sha256_file(destination)
+    _append_checkpoint_index(
+        output_directory,
+        {
+            "event": "saved_full_resume",
+            "path": str(destination.relative_to(output_directory)),
+            "artifact_sha256": artifact_sha256,
+            "checkpoint_sha256": artifact_sha256,
+            "provenance": provenance,
+        },
+    )
     _write_json(
         checkpoint_directory / "latest.json",
-        {"completed_steps": completed_steps, "path": destination.name},
+        {
+            "completed_steps": completed_steps,
+            "path": destination.name,
+            "artifact_sha256": artifact_sha256,
+        },
     )
-    return destination
+    return destination, artifact_sha256
+
+
+def _retain_latest_resume_checkpoints(output_directory: Path, retention: int) -> None:
+    checkpoint_directory = output_directory / "checkpoints" / "resume"
+    checkpoints = sorted(checkpoint_directory.glob("step_*.pt"))
+    while len(checkpoints) > retention:
+        retired = checkpoints.pop(0)
+        retired.unlink()
+        _append_checkpoint_index(
+            output_directory,
+            {
+                "event": "retired_full_resume",
+                "path": str(retired.relative_to(output_directory)),
+            },
+        )
+
+
+def _save_trajectory_snapshot(
+    output_directory: Path,
+    config: RunConfig,
+    backend: TrainingBackend,
+    point: TrajectoryPoint,
+) -> tuple[Path, str]:
+    if point.is_final:
+        raise ValueError("The final trajectory point must reuse the final full checkpoint.")
+    checkpoint_directory = output_directory / "checkpoints" / "trajectory"
+    destination = checkpoint_directory / f"step_{point.optimizer_step:08d}_{point.label}_model.pt"
+    provenance = _checkpoint_provenance(
+        config,
+        point.optimizer_step,
+        point.progress_fraction,
+        _current_git_commit(),
+        evaluation_status="pending",
+    )
+    _atomic_torch_save(
+        {
+            "schema_version": CHECKPOINT_SCHEMA_VERSION,
+            "checkpoint_kind": "trajectory_model",
+            "run_id": config.run_id,
+            "config_sha256": _config_signature(config),
+            "completed_steps": point.optimizer_step,
+            "model": backend.state_dict(),
+            "provenance": provenance,
+        },
+        destination,
+    )
+    artifact_sha256 = sha256_file(destination)
+    metadata = {
+        "checkpoint_kind": "trajectory_model",
+        "path": destination.name,
+        "artifact_sha256": artifact_sha256,
+        "model_state_sha256": artifact_sha256,
+        "provenance": provenance,
+    }
+    _write_json(destination.with_suffix(".json"), metadata)
+    _append_checkpoint_index(output_directory, {"event": "saved_trajectory_model", **metadata})
+    return destination, artifact_sha256
+
+
+def _record_final_checkpoint(
+    output_directory: Path,
+    config: RunConfig,
+    checkpoint_path: Path,
+    artifact_sha256: str,
+) -> None:
+    provenance = _checkpoint_provenance(
+        config,
+        config.max_steps,
+        1.0,
+        _current_git_commit(),
+        evaluation_status="pending",
+    )
+    payload = {
+        "checkpoint_kind": "final_full_resume",
+        "path": str(checkpoint_path.relative_to(output_directory)),
+        "artifact_sha256": artifact_sha256,
+        "checkpoint_sha256": artifact_sha256,
+        "provenance": provenance,
+    }
+    _write_json(output_directory / "checkpoints" / "final.json", payload)
+    _append_checkpoint_index(output_directory, {"event": "marked_final", **payload})
 
 
 def run_training(
@@ -262,6 +417,12 @@ def run_training(
     device = torch.device(device_name)
     _seed_everything(config.seed, config.deterministic)
     input_metadata = validate_training_inputs(config)
+    checkpoint_plan = build_checkpoint_plan(
+        max_steps=config.max_steps,
+        trajectory_progress_fractions=config.trajectory_progress_fractions,
+        resume_progress_interval=config.resume_progress_interval,
+        resume_retention=config.resume_retention,
+    )
 
     model_options = dict(config.model_options)
     if config.model_name == "albef" and model_options.get("alpha_warmup_steps") is None:
@@ -342,6 +503,8 @@ def run_training(
         payload = torch.load(resume_checkpoint, map_location="cpu", weights_only=False)
         if payload.get("schema_version") != CHECKPOINT_SCHEMA_VERSION:
             raise ValueError("Unsupported training checkpoint schema.")
+        if payload.get("checkpoint_kind") != "full_resume":
+            raise ValueError("Only full resume checkpoints can continue training.")
         if payload.get("run_id") != config.run_id:
             raise ValueError("Resume checkpoint belongs to a different run.")
         if payload.get("config_sha256") != _config_signature(config):
@@ -370,6 +533,20 @@ def run_training(
             "config_sha256": _config_signature(config),
             "input_metadata": input_metadata,
             "parameter_counts": parameter_counts,
+            "checkpoint_policy": {
+                "m0_progress_fraction": 0.0,
+                "trajectory_points": [
+                    {
+                        "progress_fraction": point.progress_fraction,
+                        "optimizer_step": point.optimizer_step,
+                        "label": point.label,
+                    }
+                    for point in checkpoint_plan.trajectory_points
+                ],
+                "resume_steps": sorted(checkpoint_plan.resume_steps),
+                "resume_retention": checkpoint_plan.resume_retention,
+                "trajectory_evaluation_mode": "batch_after_branch_completion",
+            },
             "optimizer_parameter_groups": [
                 {
                     "group_name": str(group["group_name"]),
@@ -387,7 +564,7 @@ def run_training(
                 "relation_cycle_unit": "optimizer_step",
                 "single_gpu_in_batch_negatives": True,
                 "albef_state_updates_per_optimizer_step": True,
-                "validation_interval_equals_checkpoint_interval": True,
+                "validation_at_full_resume_checkpoint_steps": True,
                 "validation_parameter_updates": False,
                 "validation_checkpoint_selection": False,
                 "probe_evaluation_during_training": False,
@@ -397,6 +574,7 @@ def run_training(
     metrics_path = output_directory / "train_metrics.jsonl"
     validation_metrics_path = output_directory / "validation_metrics.jsonl"
     last_validation_step: int | None = None
+    final_checkpoint: Path | None = None
 
     while completed_steps < config.max_steps:
         learning_rate = _learning_rate(config, completed_steps)
@@ -472,10 +650,20 @@ def run_training(
         if completed_steps % config.log_interval == 0 or completed_steps == 1:
             _append_jsonl(metrics_path, record)
             print(json.dumps(record, ensure_ascii=False), flush=True)
-        if completed_steps % config.checkpoint_interval == 0:
-            checkpoint_path = _save_checkpoint(
+        trajectory_point = checkpoint_plan.trajectory_point_at(completed_steps)
+        if trajectory_point is not None and not trajectory_point.is_final:
+            _save_trajectory_snapshot(output_directory, config, backend, trajectory_point)
+
+        if checkpoint_plan.is_resume_step(completed_steps):
+            checkpoint_path, checkpoint_sha256 = _save_full_resume_checkpoint(
                 output_directory, config, backend, optimizer, completed_steps, stream
             )
+            _retain_latest_resume_checkpoints(output_directory, checkpoint_plan.resume_retention)
+            if trajectory_point is not None and trajectory_point.is_final:
+                _record_final_checkpoint(
+                    output_directory, config, checkpoint_path, checkpoint_sha256
+                )
+                final_checkpoint = checkpoint_path
             if validation_loader is not None:
                 validation_record = run_validation(
                     backend=backend,
@@ -494,27 +682,12 @@ def run_training(
                 )
                 last_validation_step = completed_steps
 
-    final_checkpoint = _save_checkpoint(
-        output_directory, config, backend, optimizer, completed_steps, stream
-    )
-    if validation_loader is not None and last_validation_step != completed_steps:
-        validation_record = run_validation(
-            backend=backend,
-            loader=validation_loader,
-            branch=config.branch,
-            optimizer_step=completed_steps,
-            seed=config.seed,
-            device=device,
-            precision=config.precision,
-        )
-        validation_record["checkpoint"] = str(final_checkpoint)
-        _append_jsonl(validation_metrics_path, validation_record)
-        print(json.dumps({"validation": validation_record}, ensure_ascii=False), flush=True)
-        last_validation_step = completed_steps
+    if final_checkpoint is None:
+        raise RuntimeError("The checkpoint plan did not save a final full checkpoint.")
     manifest = json.loads(run_manifest_path.read_text(encoding="utf-8"))
     manifest["status"] = "complete"
     manifest["completed_steps"] = completed_steps
-    manifest["final_checkpoint"] = str(final_checkpoint)
+    manifest["final_checkpoint"] = str(final_checkpoint.relative_to(output_directory))
     manifest["last_validation_step"] = last_validation_step
     _write_json(run_manifest_path, manifest)
     return final_checkpoint
