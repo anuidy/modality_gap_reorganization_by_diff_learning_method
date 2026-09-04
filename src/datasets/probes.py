@@ -117,9 +117,14 @@ def load_coco_manifest(path: Path, project_root: Path) -> ProbeManifest:
     )
 
 
-def load_lcs_manifest(project_root: Path, path: Path) -> ProbeManifest:
+def load_lcs_manifest(
+    project_root: Path,
+    path: Path,
+    image_root: Path | None = None,
+) -> ProbeManifest:
     payload = _read_json(path)
-    image_root = project_root / "data" / "raw" / "lcs_558k" / "probe_images"
+    if image_root is None:
+        image_root = project_root / "data" / "raw" / "lcs_558k" / "probe_images"
     samples = tuple(
         ProbeSample(
             sample_id=f"lcs_558k:{record['id']}",

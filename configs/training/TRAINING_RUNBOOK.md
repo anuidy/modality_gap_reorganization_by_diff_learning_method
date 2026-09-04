@@ -65,6 +65,17 @@ python -u scripts/training/train.py \
 
 每个 run 的 `checkpoints/resume/latest.json` 会指向最新可恢复的完整 checkpoint；运行中只保留最新两份完整 resume state。训练进度 1%、5%、20%、50% 另存 model-only trajectory snapshot，100% 的 final full checkpoint 同时是最终轨迹点和评测输入。轨迹表示评测在 branch 完成后批量运行，不在训练中改变模型状态。
 
+一个 branch 完成后，使用服务器 Pilot 已确认的评测 batch size 导出全部轨迹 raw embedding，并计算相邻变化：
+
+```bash
+python -u scripts/evaluation/evaluate_trajectory.py \
+  --run clip_standard \
+  --batch-size 128 \
+  --device cuda
+```
+
+评测器固定处理 COCO 5K 与 LCS 10K，不接受改变 Probe 的命令行参数。正式定义见 `configs/evaluation/TRAJECTORY_EVALUATION_PROTOCOL.md`。
+
 全部 8 个分支顺序执行：
 
 ```bash

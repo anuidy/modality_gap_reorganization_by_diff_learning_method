@@ -163,16 +163,116 @@ def _knn_indices(embeddings_l2: np.ndarray, k: int = KNN_K, block_size: int = 51
     return neighbors
 
 
-def save_m0_geometry_reference(
+def _average_ranks(values: np.ndarray) -> np.ndarray:
+    values = np.asarray(values)
+    order = np.argsort(values, kind="stable")
+    sorted_values = values[order]
+    ranks = np.empty(len(values), dtype=np.float64)
+    start = 0
+    while start < len(values):
+        end = start + 1
+        while end < len(values) and sorted_values[end] == sorted_values[start]:
+            end += 1
+        ranks[order[start:end]] = (start + end - 1) / 2.0
+        start = end
+    return ranks
+
+
+def spearman_correlation(source: np.ndarray, target: np.ndarray) -> float:
+    if source.shape != target.shape or source.ndim != 1:
+        raise ValueError("Spearman inputs must be same-shaped one-dimensional arrays.")
+    source_ranks = _average_ranks(source)
+    target_ranks = _average_ranks(target)
+    source_centered = source_ranks - source_ranks.mean()
+    target_centered = target_ranks - target_ranks.mean()
+    denominator = np.linalg.norm(source_centered) * np.linalg.norm(target_centered)
+    if denominator == 0:
+        raise ValueError("Spearman correlation is undefined for a constant rank vector.")
+    return float(np.dot(source_centered, target_centered) / denominator)
+
+
+def neighbor_overlap(source_neighbors: np.ndarray, target_neighbors: np.ndarray) -> float:
+    if source_neighbors.shape != target_neighbors.shape or source_neighbors.ndim != 2:
+        raise ValueError("Neighbor arrays must share shape [N, K].")
+    k = source_neighbors.shape[1]
+    if k <= 0:
+        raise ValueError("Neighbor overlap requires K > 0.")
+    overlap_counts = np.fromiter(
+        (
+            len(set(source_row.tolist()).intersection(target_row.tolist()))
+            for source_row, target_row in zip(source_neighbors, target_neighbors, strict=True)
+        ),
+        dtype=np.float64,
+        count=source_neighbors.shape[0],
+    )
+    return float(np.mean(overlap_counts / k))
+
+
+def compare_geometry_states(source_path: Path, target_path: Path) -> dict[str, Any]:
+    with np.load(source_path, allow_pickle=False) as source, np.load(
+        target_path, allow_pickle=False
+    ) as target:
+        source_manifest = str(source["manifest_sha256"])
+        target_manifest = str(target["manifest_sha256"])
+        if source_manifest != target_manifest:
+            raise ValueError("Geometry states belong to different probe manifests.")
+        source_k = int(source["knn_k"])
+        target_k = int(target["knn_k"])
+        if source_k != target_k:
+            raise ValueError("Geometry states use different kNN neighborhood sizes.")
+        return {
+            "protocol": {
+                "pair_similarity": "cosine_on_fixed_upper_triangle_pairs",
+                "pair_correlation": "spearman_with_average_tie_ranks",
+                "knn": f"neighbor_overlap_at_{source_k}",
+            },
+            "manifest_sha256": source_manifest,
+            "image": {
+                "spearman": spearman_correlation(
+                    source["image_pair_cosines"], target["image_pair_cosines"]
+                ),
+                "neighbor_overlap": neighbor_overlap(
+                    source["image_knn_indices"], target["image_knn_indices"]
+                ),
+            },
+            "text": {
+                "spearman": spearman_correlation(
+                    source["text_pair_cosines"], target["text_pair_cosines"]
+                ),
+                "neighbor_overlap": neighbor_overlap(
+                    source["text_knn_indices"], target["text_knn_indices"]
+                ),
+            },
+        }
+
+
+def floating_metric_deltas(source: Any, target: Any) -> Any:
+    """Return target-minus-source deltas for matching floating metric leaves."""
+
+    if isinstance(source, dict) and isinstance(target, dict):
+        result = {
+            key: floating_metric_deltas(source[key], target[key])
+            for key in source
+            if key in target
+        }
+        return {key: value for key, value in result.items() if value not in ({}, None)}
+    if isinstance(source, float) and isinstance(target, float):
+        return target - source
+    return None
+
+
+def save_geometry_state(
     image_embeddings_l2: np.ndarray,
     text_embeddings_l2: np.ndarray,
     manifest_sha256: str,
     pair_index_path: Path,
-    reference_path: Path,
+    state_path: Path,
 ) -> dict[str, Any]:
+    """Persist pair cosines and kNN indices for later checkpoint transitions."""
+
     sample_count = image_embeddings_l2.shape[0]
     pair_index_path.parent.mkdir(parents=True, exist_ok=True)
-    reference_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
     if pair_index_path.exists():
         with np.load(pair_index_path, allow_pickle=False) as existing:
             row_indices = existing["row_indices"]
@@ -191,10 +291,14 @@ def save_m0_geometry_reference(
             seed=np.asarray(GEOMETRY_SEED, dtype=np.int64),
         )
 
-    image_pair_cosines = np.sum(image_embeddings_l2[row_indices] * image_embeddings_l2[column_indices], axis=1)
-    text_pair_cosines = np.sum(text_embeddings_l2[row_indices] * text_embeddings_l2[column_indices], axis=1)
+    image_pair_cosines = np.sum(
+        image_embeddings_l2[row_indices] * image_embeddings_l2[column_indices], axis=1
+    )
+    text_pair_cosines = np.sum(
+        text_embeddings_l2[row_indices] * text_embeddings_l2[column_indices], axis=1
+    )
     np.savez(
-        reference_path,
+        state_path,
         image_pair_cosines=image_pair_cosines.astype(np.float32),
         text_pair_cosines=text_pair_cosines.astype(np.float32),
         image_knn_indices=_knn_indices(image_embeddings_l2),
@@ -204,21 +308,40 @@ def save_m0_geometry_reference(
         knn_k=np.asarray(KNN_K, dtype=np.int64),
     )
     return {
-        "status": "m0_reference_saved",
+        "status": "geometry_state_saved",
         "pair_count": int(len(row_indices)),
         "pair_seed": GEOMETRY_SEED,
         "knn_metric": "neighbor_overlap_at_10",
         "pair_index_path": str(pair_index_path),
-        "reference_path": str(reference_path),
+        "state_path": str(state_path),
     }
 
 
-def compute_six_metrics(
-    image_embeddings_raw: np.ndarray,
-    text_embeddings_raw: np.ndarray,
+def save_m0_geometry_reference(
+    image_embeddings_l2: np.ndarray,
+    text_embeddings_l2: np.ndarray,
     manifest_sha256: str,
     pair_index_path: Path,
-    geometry_reference_path: Path,
+    reference_path: Path,
+) -> dict[str, Any]:
+    metadata = save_geometry_state(
+        image_embeddings_l2,
+        text_embeddings_l2,
+        manifest_sha256,
+        pair_index_path,
+        reference_path,
+    )
+    reference_path_value = metadata.pop("state_path")
+    return {
+        **metadata,
+        "status": "m0_reference_saved",
+        "reference_path": reference_path_value,
+    }
+
+
+def compute_point_metrics(
+    image_embeddings_raw: np.ndarray,
+    text_embeddings_raw: np.ndarray,
     score_block_size: int = 512,
 ) -> dict[str, Any]:
     if image_embeddings_raw.shape != text_embeddings_raw.shape:
@@ -247,22 +370,43 @@ def compute_six_metrics(
             "l2_normalized": covariance_gap(image_embeddings_l2, text_embeddings_l2),
         },
         "effective_rank": {
-            "raw": {"image": effective_rank(image_embeddings_raw), "text": effective_rank(text_embeddings_raw)},
+            "raw": {
+                "image": effective_rank(image_embeddings_raw),
+                "text": effective_rank(text_embeddings_raw),
+            },
             "l2_normalized": {
                 "image": effective_rank(image_embeddings_l2),
                 "text": effective_rank(text_embeddings_l2),
             },
         },
         "cross_modal_alignment": cross_modal_alignment(image_embeddings_l2, text_embeddings_l2),
-        "intra_modal_geometry_preservation": save_m0_geometry_reference(
-            image_embeddings_l2,
-            text_embeddings_l2,
-            manifest_sha256,
-            pair_index_path,
-            geometry_reference_path,
-        ),
         "score_gap": score_gap(image_embeddings_l2, text_embeddings_l2, block_size=score_block_size),
     }
+
+
+def compute_six_metrics(
+    image_embeddings_raw: np.ndarray,
+    text_embeddings_raw: np.ndarray,
+    manifest_sha256: str,
+    pair_index_path: Path,
+    geometry_reference_path: Path,
+    score_block_size: int = 512,
+) -> dict[str, Any]:
+    metrics = compute_point_metrics(
+        image_embeddings_raw,
+        text_embeddings_raw,
+        score_block_size=score_block_size,
+    )
+    image_embeddings_l2 = l2_normalize(image_embeddings_raw)
+    text_embeddings_l2 = l2_normalize(text_embeddings_raw)
+    metrics["intra_modal_geometry_preservation"] = save_m0_geometry_reference(
+        image_embeddings_l2,
+        text_embeddings_l2,
+        manifest_sha256,
+        pair_index_path,
+        geometry_reference_path,
+    )
+    return metrics
 
 
 def save_metrics(path: Path, metrics: dict[str, Any]) -> None:

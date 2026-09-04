@@ -43,8 +43,10 @@ outputs/training/<run_id>/
 
 - 训练中只创建 snapshot；不加载 snapshot 回写当前训练模型。
 - branch 完成后，trajectory evaluator 从磁盘重新加载 `1/5/20/50%` trajectory snapshot 与 100% final full checkpoint，提取固定 COCO 5K 和 LCS 10K 的 `e_I/e_T`。
-- 每个点计算六项指标、相对 M0 的变化和 `Geometry Preservation(M0, T_k)`。
+- 每个点保存 raw embedding、point metrics 与 geometry state；跨时间点的正式比较由独立 trajectory evaluation protocol 定义。
 - 指标只能观察轨迹，不能用于 early stopping、学习率调整、checkpoint selection 或改变后续训练数据。
+
+当前实现保存每个点的 raw pre-L2 float32 `e_I/e_T`，并自动计算 `M0 → 1% → 5% → 20% → 50% → 100%` 相邻变化。其他比较组留到正式训练结束后再定义；完整 artifact 与输出布局见 `configs/evaluation/TRAJECTORY_EVALUATION_PROTOCOL.md`。
 
 ## Future Full GCL
 
