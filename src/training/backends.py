@@ -140,6 +140,11 @@ class TrainingBackend(nn.Module, ABC):
         if device.type == "cuda" and not torch.cuda.is_available():
             raise RuntimeError("CUDA was requested but is unavailable.")
         self.device = device
+        # Native CLIP/VISTA loaders are strict. BEiT-3/ALBEF expose their
+        # permissive-load result so an independent preflight can reject gaps.
+        self.checkpoint_load_report: dict[str, list[str]] = {
+            "missing_keys": [], "unexpected_keys": []
+        }
 
     @abstractmethod
     def prepare_batch(self, batch: RawTrainingBatch, augmentation_seed: int) -> PreparedBatch:
@@ -343,6 +348,10 @@ class Beit3TrainingBackend(TrainingBackend):
         self.model = modeling_finetune.beit3_base_patch16_224_retrieval()
         checkpoint_payload = torch.load(checkpoint, map_location="cpu", weights_only=True)
         load_result = self.model.load_state_dict(checkpoint_payload["model"], strict=False)
+        self.checkpoint_load_report = {
+            "missing_keys": list(load_result.missing_keys),
+            "unexpected_keys": list(load_result.unexpected_keys),
+        }
         if load_result.unexpected_keys:
             raise RuntimeError(f"Unexpected BEiT-3 checkpoint keys: {load_result.unexpected_keys[:5]}")
         self.model.to(device)
@@ -505,6 +514,10 @@ class AlbefTrainingBackend(TrainingBackend):
         )
         checkpoint_payload = torch.load(checkpoint, map_location="cpu", weights_only=True)
         load_result = self.model.load_state_dict(checkpoint_payload["model"], strict=False)
+        self.checkpoint_load_report = {
+            "missing_keys": list(load_result.missing_keys),
+            "unexpected_keys": list(load_result.unexpected_keys),
+        }
         if load_result.unexpected_keys:
             raise RuntimeError(f"Unexpected ALBEF checkpoint keys: {load_result.unexpected_keys[:5]}")
         self.model.__class__.forward.__globals__["concat_all_gather"] = _safe_concat_all_gather

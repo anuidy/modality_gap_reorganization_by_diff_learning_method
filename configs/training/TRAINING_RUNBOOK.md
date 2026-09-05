@@ -10,6 +10,7 @@
 - `src/training/config.py`：8-run 矩阵和控制变量校验。
 - `src/training/engine.py`：单卡 A800 的 BF16、梯度累积、日志、断点与 checkpoint。
 - `scripts/training/train.py`：单个 run 的命令入口。
+- `scripts/training/audit_gradients.py`：独立真实批次梯度审计，不执行参数优化步骤。
 - `scripts/training/run_all.sh`：配置完成后依次校验并运行 8 个分支。
 
 ## 训练数据 manifest
@@ -22,7 +23,13 @@
 
 `image` 必须是相对 `image_root` 的路径。`sample_id` 和 `semantic_id` 必须全局唯一。这个限制保证每个 query 恰好只有一个 positive，其余 `N-1` 个 candidate 都是真 negative。完整示例见 `data/metadata/training_manifest_example.jsonl`。
 
-## 先冻结配置
+## 先运行独立梯度审计
+
+在填写正式训练参数前，先按 `configs/training/GRADIENT_AUDIT_PROTOCOL.md` 指定诊断 seed、batch size 与预处理设置，运行 `scripts/training/audit_gradients.py`。该入口核对 M0/数据身份并检查各关系、各损失的模块梯度；只做到 backward，不执行 optimizer step。ALBEF 还需显式诊断 alpha。
+
+审计结果位于 `outputs/pilot/gradient_audit/`，不会写入正式训练目录。当前阶段先完成该审计；带参数更新的 Pilot 另行确认后执行。
+
+## 正式训练前冻结配置
 
 编辑 `configs/training/train_runs.yaml` 中的 `null` 字段：
 
@@ -36,11 +43,11 @@
 
 顶层 `controls` 是四个模型共同的默认值。若不同模型需要不同优化设置，可在对应 `models.<model>` 下增加 `optimizer`、`scheduler` 或 `budget`；同一个模型的两个分支仍从同一个 model block 读取，因此不能在 run 层改变控制变量。
 
-推荐先只确定 pilot 配置，跑通每个模型的两个分支各 2–10 个 optimizer steps；pilot 验证 checkpoint load、显存、loss、relation audit 和 resume 后，再冻结正式 budget。
+独立梯度审计通过后，下一阶段可另行确定带参数更新的 pilot 配置，跑通每个模型的两个分支各 2–10 个 optimizer steps，验证实际更新、优化器显存、checkpoint 写入和 resume，再冻结正式 budget。这个阶段不由梯度审计脚本启动。
 
 ## AutoDL 执行顺序
 
-安装 CUDA 版 PyTorch 与依赖后，先逐项校验：
+安装 CUDA 版 PyTorch 与依赖后，先完成上述独立梯度审计。以下命令属于配置已填写的训练阶段，逐项校验：
 
 ```bash
 python scripts/training/train.py --run clip_standard --validate-only
