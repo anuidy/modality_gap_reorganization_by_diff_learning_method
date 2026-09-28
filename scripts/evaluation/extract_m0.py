@@ -10,7 +10,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from datasets.probes import ProbeManifest, load_coco_manifest, load_lcs_manifest, validate_manifest_images  # noqa: E402
 from embeddings.artifact import save_embedding_artifact  # noqa: E402
 from evaluation.embedding_export import export_raw_embeddings, runtime_metadata  # noqa: E402
-from models.factory import create_m0_adapter  # noqa: E402
+from model_adapters.factory import create_m0_adapter  # noqa: E402
 
 
 def load_manifest(probe: str) -> ProbeManifest:

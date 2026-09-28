@@ -21,13 +21,14 @@ from training.audit_groups import inspect_gradients
 from training.backends import TrainingBackend, create_training_backend
 from training.engine import _autocast, _current_git_commit, _seed_everything
 from training.validation import _preserve_rng, _seed_validation
+from objectives.contrastive import BRANCH_DEFINITIONS
 
 
 def audit_cases(branch: str) -> list[tuple[str, int, str]]:
     if branch == "standard":
         return [("I<->T", 0, "total")]
-    if branch == "count_matched_mixed":
-        return [(relation, step, "total") for step, relation in enumerate(("I<->T", "I<->IT", "T<->IT"))]
+    if branch in BRANCH_DEFINITIONS:
+        return [(branch, 0, "total")]
     if branch == "itc_only":
         return [("ITC", 0, "ITC")]
     if branch == "full_albef":
@@ -102,6 +103,7 @@ def audit_backend(
     modes = {module: module.training for module in backend.modules()}
     reports = []
     device = backend.device
+    backend.set_random_seed(seed)
     with _preserve_rng():
         try:
             for label, step, component in audit_cases(branch):
@@ -150,7 +152,7 @@ def audit_backend(
                     report["gradients"] = inspect_gradients(backend, backend.model_name, component)
                     path_ok = True
                     if backend.model_name == "vista":
-                        expected = {"I<->T": (1, 1, 1), "I<->IT": (1, 0, 2), "T<->IT": (0, 1, 1)}[label]
+                        expected = (1, 1, 1) if branch in {"standard", "fixed_2m"} else (1, 1, 2)
                         path_ok = tuple(calls[k] for k in ("encode_image", "encode_text", "encode_mm")) == expected
                     buffers = dict(backend.named_buffers())
                     report["queue_buffers"] = {

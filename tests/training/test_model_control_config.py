@@ -28,7 +28,7 @@ class ModelControlConfigTest(unittest.TestCase):
                 "train_manifest": "data/train.jsonl",
                 "image_root": "data/images",
                 "seed": 7,
-                "micro_batch_size": 8,
+                "micro_batch_size": 6,
                 "gradient_accumulation": 1,
                 "scheduler_type": "cosine",
                 "warmup_steps": 10,
@@ -40,7 +40,7 @@ class ModelControlConfigTest(unittest.TestCase):
                 "augmentation_hflip": 0.5,
             }
             standard = load_run_config(config_path, "clip_standard", PROJECT_ROOT, common)
-            mixed = load_run_config(config_path, "clip_count_matched_mixed", PROJECT_ROOT, common)
+            mixed = load_run_config(config_path, "clip_mixed_3m_fn_off", PROJECT_ROOT, common)
         self.assertEqual(standard.learning_rate, 2e-5)
         self.assertEqual(standard.learning_rate, mixed.learning_rate)
         self.assertEqual(standard.weight_decay, mixed.weight_decay)

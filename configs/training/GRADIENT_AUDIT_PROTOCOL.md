@@ -8,11 +8,11 @@
 
 ## 身份与输入检查
 
-- 复用八组实验矩阵校验、M0 SHA-256（文件内容校验值）和完整数据身份锁。
+- 复用正式分支矩阵校验、M0 SHA-256（文件内容校验值）和完整数据身份锁。
 - Validation、LCS Probe、COCO Probe 只核对身份，不加载为审计批次。
 - 复用确定性采样器，取 epoch 0 的首个完整批次；同一 seed、batch size、预处理设置下，各关系及同模型两分支共用相同样本和图像视图。
 - 不自动缩小 batch、不重采样、不重试 MLM mask（被遮盖的文本位置）。非有限损失会明确报告。
-- 单进程、单 GPU；默认 BF16（脑浮点16位精度），不支持时明确拒绝。`--precision fp32 --device cpu` 只用于 CPU 诊断，不能替代 A800 BF16 验证。
+- 单进程、单 GPU；默认 BF16（脑浮点16位精度），不支持时明确拒绝。`--precision fp32 --device cpu` 只用于 CPU 诊断，不能替代 目标4090 BF16 验证。
 - CLIP/VISTA 复用原生严格加载器；BEiT-3/ALBEF 保留现有加载行为，但审计读取完整 missing/unexpected keys（缺失或多余权重名称），任一非空即停止。不得自动豁免缺失参数或用随机初始化继续宣告通过。
 
 ## 独立检查项
@@ -20,7 +20,7 @@
 | 分支 | 检查项 |
 |---|---|
 | Standard | I↔T（图像↔文本） |
-| Count-Matched Mixed | I↔T、I↔IT（图像↔联合表示）、T↔IT（文本↔联合表示）分别检查 |
+| Fixed / Mixed / Full | 对各分支完整目标执行一次反向审计；Mixed同一步三组、Full同一步六方向 |
 | ALBEF ITC-only | ITC（图文对比损失） |
 | Full ALBEF | 总损失，以及 ITC、ITM（图文匹配）、MLM（掩码语言建模）各自的梯度 |
 
@@ -37,7 +37,7 @@ Full ALBEF 的四项检查各自重新执行相同随机种子的完整 forward�
 
 BEiT-3 当前 torchscale 实现中，attention、FFN 和归一化参数具有 A/B 两路，分别报告图像/文本侧，不能统称全部共享。参数名称由实际结构匹配；未知参数和缺失的必需参数组直接标记失败。
 
-VISTA 的图像编码本身也调用原生 `encode_mm`，使用空文本提示并经过 BGE。检查中额外记录方法调用次数：按 `encode_image / encode_text / encode_mm` 顺序，I↔T 应为 `1/1/1`，I↔IT 为 `1/0/2`，T↔IT 为 `0/1/1`。这验证所执行的方法路径；参数梯度不进一步分解到每次共享模块调用。实际 temperature 是固定数值，不要求梯度。
+VISTA 的图像编码本身也调用原生 `encode_mm`，使用空文本提示并经过 BGE。检查中额外记录方法调用次数：按 `encode_image / encode_text / encode_mm` 顺序，Standard/Fixed-2M应为 `1/1/1`，其余正式主分支均为 `1/1/2`。这验证所执行的方法路径；参数梯度不进一步分解到每次共享模块调用。实际 temperature 是固定数值，不要求梯度。
 
 | 预期状态 | 通过要求 |
 |---|---|
@@ -64,7 +64,7 @@ ALBEF 复用现有累积窗口：开始时执行一次显式 momentum update，f
 
 ```bash
 python -u scripts/training/audit_gradients.py \
-  --run clip_count_matched_mixed \
+  --run clip_mixed_3m_fn_off \
   --seed "$AUDIT_SEED" \
   --batch-size "$AUDIT_BATCH_SIZE" \
   --augmentation "$AUDIT_AUGMENTATION" \
@@ -74,7 +74,7 @@ python -u scripts/training/audit_gradients.py \
 
 `AUDIT_AUGMENTATION` 可选 `resize_center_crop` 或 `random_resized_crop`；后者还需追加 `--crop-scale "$AUDIT_CROP_MIN" "$AUDIT_CROP_MAX"`。ALBEF 两分支追加 `--alpha "$AUDIT_ALPHA"`。同模型两分支必须使用相同的上述诊断参数。
 
-追加 `--validate-only` 时，仅检查文件和数据身份，不加载模型、不解码训练图片、不验证 GPU 或梯度。该结果明确标记为 `preflight_identity_only`，不能当成完整审计通过。替换 `--run` 可依次检查全部八组；不自动开始正式训练。
+追加 `--validate-only` 时，仅检查文件和数据身份，不加载模型、不解码训练图片、不验证 GPU 或梯度。该结果明确标记为 `preflight_identity_only`，不能当成完整审计通过。替换 `--run` 可依次检查全部正式分支；不自动开始正式训练。
 
 ## 输出与边界
 
@@ -88,4 +88,6 @@ outputs/pilot/gradient_audit/<run_id>/<UTC timestamp>/report.json
 
 时间统计不包含状态复制/校验及梯度统计；为了隔离检查，主机内存额外保存一份模型 tensor state。这里的显存不包含 optimizer 状态，也不验证 gradient accumulation（梯度累积）、实际参数更新、checkpoint 写入或 resume（恢复训练）一致性。
 
-退出码 `0` 表示当前模式全部通过；`2` 表示失败或运行异常。模型运行异常记录后停止后续项；数值或模块判定失败仍可报告后续独立项。真实四模型 BF16、吞吐与显存结论必须来自 AutoDL A800 运行结果。
+退出码 `0` 表示当前模式全部通过；`2` 表示失败或运行异常。模型运行异常记录后停止后续项；数值或模块判定失败仍可报告后续独立项。真实四模型 BF16、吞吐与显存结论必须来自 AutoDL 目标4090 运行结果。
+
+Mixed审计batch必须可被3整除；完整正式批次检查使用36。CPU测试或小批次审计不能替代含优化器状态的4090峰值显存检查。

@@ -1,10 +1,59 @@
-# Generated experiment artifacts and large local assets
-outputs/
-data/raw/
-data/processed/
-checkpoints/
-wandb/
-third_party/
+# Runtime resources/results stay on the full server or in the local workspace.
+# GitHub contains source, configuration, tests and knowledge documents only.
+/data/
+/outputs/
+/analysis/
+/figures/
+/checkpoints/
+/models/
+/wandb/
+/third_party/
+/_local/
+/server-evidence*/
+/m0_sha256.txt
+
+# Operational history is server-only, never part of the shared source tree.
+/change_logs/
+**/HANDOFF*.md
+**/*_HANDOFF.md
+
+# Model files, arrays and archives must not be staged from an unexpected folder.
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+*.bin
+*.spm
+*.npz
+*.npy
+*.parquet
+*.arrow
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.log
+*.sqlite
+*.sqlite3
+*.db
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+*.7z
+*.gz
+*.zst
+
+# Machine credentials and private environment settings are never shared.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+/1.txt
 
 # Python caches and virtual environments
 __pycache__/
@@ -12,6 +61,7 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
+node_modules/
 
 # Editor and operating-system files
 .vscode/

@@ -1,6 +1,5 @@
 schema_version: 1
-status: locked
-
+status: formal_training_protocol_v1
 model_initializations:
   clip_vit_l14:
     checkpoint: data/raw/models/clip_sf/ViT-L-14.pt
@@ -15,48 +14,87 @@ model_initializations:
   beit3_base_itc:
     checkpoint: data/raw/models/beit3/beit3_base_itc_patch16_224.pth
     checkpoint_sha256: d483a41d92b9aea7ef87d17551413b8c22faae927110666b01ac3aa7a199a25b
-
 shared_analysis:
   checkpoint_origin: m0
   extracted_representations:
-    - e_I
-    - e_T
+  - e_I
+  - e_T
   metrics:
-    - centroid_gap
-    - covariance_gap
-    - effective_rank
-    - cross_modal_alignment
-    - intra_modal_geometry_preservation
-    - score_gap
+  - centroid_gap
+  - covariance_gap
+  - effective_rank
+  - cross_modal_alignment
+  - intra_modal_geometry_preservation
+  - score_gap
+  - anisotropy
+  - norm_dynamics
   primary_analysis: checkpoint_delta_from_m0
-
+  evaluation_implementation: ABC_protocol_pending_separate_implementation
 comparison_families:
   relation_intervention:
     models:
-      - clip_vit_l14
-      - vista_stage1
-      - beit3_base_itc
+    - clip_vit_l14
+    - vista_stage1
+    - beit3_base_itc
     branches:
-      standard_cl:
+      standard:
         branch_id: standard
-        relations:
-          - I_to_T
-          - T_to_I
-      count_matched_mixed_cl:
-        branch_id: count_matched_mixed
-        relation_cycle:
-          - I_bidirectional_T
-          - I_bidirectional_IT
-          - T_bidirectional_IT
-        positive_supervision_count_matched: true
-        negative_count_per_query_matched: true
-        one_positive_per_query: true
-        candidate_pool: current_relation_target_modality_only
-        same_semantic_instance_excluded_from_negatives: true
+        query_allocation: I_bidirectional_T
+        positive_query_count: 72
+        candidate_pool: target_modality
+        same_instance_non_target: excluded_or_absent
+      fixed_2m:
+        branch_id: fixed_2m
+        query_allocation: I_bidirectional_T
+        positive_query_count: 72
+        candidate_pool: relation_two_modalities
+        same_instance_non_target: excluded_or_absent
+      fixed_3m_fn_off:
+        branch_id: fixed_3m_fn_off
+        query_allocation: I_bidirectional_T
+        positive_query_count: 72
+        candidate_pool: I_T_IT
+        same_instance_non_target: excluded_or_absent
+      fixed_3m_fn_on:
+        branch_id: fixed_3m_fn_on
+        query_allocation: I_bidirectional_T
+        positive_query_count: 72
+        candidate_pool: I_T_IT
+        same_instance_non_target: competitor
+      mixed_2m:
+        branch_id: mixed_2m
+        query_allocation: balanced_batch_split
+        positive_query_count: 72
+        candidate_pool: relation_two_modalities
+        same_instance_non_target: excluded_or_absent
+      mixed_3m_fn_off:
+        branch_id: mixed_3m_fn_off
+        query_allocation: balanced_batch_split
+        positive_query_count: 72
+        candidate_pool: I_T_IT
+        same_instance_non_target: excluded_or_absent
+      mixed_3m_fn_on:
+        branch_id: mixed_3m_fn_on
+        query_allocation: balanced_batch_split
+        positive_query_count: 72
+        candidate_pool: I_T_IT
+        same_instance_non_target: competitor
+      full_3m_fn_off:
+        branch_id: full_3m_fn_off
+        query_allocation: all_six
+        positive_query_count: 216
+        candidate_pool: I_T_IT
+        same_instance_non_target: excluded_or_absent
+      full_3m_fn_on:
+        branch_id: full_3m_fn_on
+        query_allocation: all_six
+        positive_query_count: 216
+        candidate_pool: I_T_IT
+        same_instance_non_target: competitor
     e_IT_rules:
       clip_vit_l14:
         type: additive
-        formula: normalize(e_I + e_T)
+        formula: normalize(e_I_raw + e_T_raw)
         extra_forward_path: false
       vista_stage1:
         type: native_joint_encoder
@@ -65,51 +103,35 @@ comparison_families:
         analysis_warning: relation_change_is_confound_with_joint_forward_compute
       beit3_base_itc:
         type: additive
-        formula: normalize(e_I + e_T)
+        formula: normalize(e_I_raw + e_T_raw)
         extra_forward_path: false
-    interpretation: standard_cl_vs_count_matched_mixed_cl
-
+    interpretation: controlled_relation_candidate_pool_and_same_instance_competition
   albef_native_objective_intervention:
     models:
-      - albef_14m_pretrained
+    - albef_14m_pretrained
     artificial_mixed_e_IT: false
     branches:
       itc_only:
         branch_id: itc_only
         losses:
-          - ITC
+        - ITC
         native_fusion_objectives_enabled: false
       full_albef:
         branch_id: full_albef
         losses:
-          - ITC
-          - ITM
-          - MLM
+        - ITC
+        - ITM
+        - MLM
         native_cross_attention_training_enabled: true
     extracted_representations:
-      - e_I
-      - e_T
+    - e_I
+    - e_T
     interpretation: itc_only_vs_native_full_cross_attention_training
     explicitly_not_equivalent_to:
-      - count_matched_mixed_cl
-      - artificial_I_T_IT_relation_training
-
-reference_only:
-  full_gcl:
-    primary_mechanism_comparison: false
-    guaranteed_models:
-      - clip_vit_l14
-      - vista_stage1
-    purpose:
-      - align_with_prior_gcl_results
-      - implementation_reference
-    count_matched: false
-
-unresolved_training_hyperparameters:
-  - learning_rate
-  - global_batch_size
-  - gradient_accumulation
-  - training_steps
-  - warmup
-  - resume_checkpoint_progress_interval_after_pilot
-  - multi_seed
+    - nine_branch_relation_intervention
+unresolved_training_hyperparameters: []
+confirmed_seeds:
+- 42
+- 43
+- 44
+gate_seed: 42

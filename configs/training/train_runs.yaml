@@ -1,10 +1,9 @@
+# Formal protocol: each run uses one GPU; one/two GPU slots only change scheduling.
+# Confirmed seeds: 42/43/44; gate and the single-seed VISTA bridge use 42.
 schema_version: 1
-status: requires_data_and_hyperparameter_freeze
-
-# These values intentionally remain null until the formal pilot protocol is
-# approved. The loader refuses to train with an unresolved value.
+status: formal_training_parameters_frozen_pending_full_model_gpu_validation
 controls:
-  seed: null
+  seed: 42
   deterministic: true
   precision: bf16
   data:
@@ -22,28 +21,32 @@ controls:
     lcs_probe_manifest_sha256: 3895e647e218d8565dc51841c5de7cc57079568dcc8b69d33d2e5e08bd4f9aa1
     coco_probe_manifest: data/splits/coco_2017_val_probe_v1.json
     coco_probe_manifest_sha256: d8133889432c37f3a436b7dcff769f87cf9b35eb6ea49a6fba00e7c32d129f85
-    num_workers: 8
+    num_workers: 4
   optimizer:
-    type: null
-    learning_rate: null
-    weight_decay: null
+    type: adamw
+    learning_rate: 1.0e-05
+    weight_decay: 0.05
     beta1: 0.9
     beta2: 0.999
-    epsilon: 1.0e-8
-    gradient_clip_norm: 1.0
+    epsilon: 1.0e-08
+    gradient_clip_norm: null
   scheduler:
-    type: null
-    warmup_steps: null
-    min_lr_ratio: null
+    type: cosine
+    warmup_steps: 300
+    min_lr_ratio: 0.1
   budget:
-    max_steps: null
+    max_steps: 15003
     log_interval: 10
   checkpointing:
-    trajectory_progress_fractions: [0.01, 0.05, 0.20, 0.50, 1.00]
-    # Pilot candidate; re-freeze before formal training begins.
-    resume_progress_interval: 0.20
-    resume_retention: 2
-
+    trajectory_progress_fractions:
+    - 0.01
+    - 0.05
+    - 0.2
+    - 0.5
+    - 1.0
+    save_resume_checkpoints: false
+    validation_progress_interval: 0.2
+  seeds: [42, 43, 44]
 models:
   clip:
     trainable_scope: full_parameter
@@ -51,17 +54,16 @@ models:
     checkpoint_sha256: b8cca3fd41ae0c99ba7e8951adf17d267cdb84cd88be6f7c2e0eca1737a03836
     resources: {}
     batch:
-      micro_batch_size: null
-      gradient_accumulation: null
+      micro_batch_size: 36
+      gradient_accumulation: 1
     augmentation:
-      name: null
-      scale_min: null
-      scale_max: null
-      horizontal_flip_probability: null
+      name: random_resized_crop
+      scale_min: 0.9
+      scale_max: 1.0
+      horizontal_flip_probability: 0.5
     options:
       image_size: 224
       max_text_tokens: 77
-
   vista:
     trainable_scope: full_parameter
     checkpoint: data/raw/models/vista/BGE_EVA_Token_S1.pth
@@ -69,18 +71,17 @@ models:
     resources:
       text_backbone: data/raw/models/vista/bge-base-en-v1.5
     batch:
-      micro_batch_size: null
-      gradient_accumulation: null
+      micro_batch_size: 36
+      gradient_accumulation: 1
     augmentation:
-      name: null
-      scale_min: null
-      scale_max: null
-      horizontal_flip_probability: null
+      name: random_resized_crop
+      scale_min: 0.9
+      scale_max: 1.0
+      horizontal_flip_probability: 0.5
     options:
       image_size: 224
       max_text_tokens: 64
       temperature: 0.02
-
   beit3:
     trainable_scope: full_parameter
     checkpoint: data/raw/models/beit3/beit3_base_itc_patch16_224.pth
@@ -88,17 +89,16 @@ models:
     resources:
       sentencepiece_model: data/raw/models/beit3/beit3.spm
     batch:
-      micro_batch_size: null
-      gradient_accumulation: null
+      micro_batch_size: 36
+      gradient_accumulation: 1
     augmentation:
-      name: null
-      scale_min: null
-      scale_max: null
-      horizontal_flip_probability: null
+      name: random_resized_crop
+      scale_min: 0.9
+      scale_max: 1.0
+      horizontal_flip_probability: 0.5
     options:
       image_size: 224
       max_text_tokens: 64
-
   albef:
     trainable_scope: full_parameter
     checkpoint: data/raw/models/albef/ALBEF_14M.pth
@@ -106,51 +106,134 @@ models:
     resources:
       text_backbone: data/raw/models/albef/bert-base-uncased
     batch:
-      micro_batch_size: null
-      gradient_accumulation: null
+      micro_batch_size: 36
+      gradient_accumulation: 1
     augmentation:
-      name: null
-      scale_min: null
-      scale_max: null
-      horizontal_flip_probability: null
+      name: random_resized_crop
+      scale_min: 0.9
+      scale_max: 1.0
+      horizontal_flip_probability: 0.5
     options:
       image_size: 256
       max_text_tokens: 30
       alpha: 0.4
-      alpha_warmup_steps: null
+      alpha_warmup_steps: 300
       mlm_probability: 0.15
       queue_size: 65536
-
 runs:
   clip_standard:
     model: clip
     branch: standard
-    output_dir: outputs/training/clip_standard
-  clip_count_matched_mixed:
+    output_dir: outputs/training/formal_v1/clip_standard
+  clip_fixed_2m:
     model: clip
-    branch: count_matched_mixed
-    output_dir: outputs/training/clip_count_matched_mixed
-  vista_standard:
-    model: vista
-    branch: standard
-    output_dir: outputs/training/vista_standard
-  vista_count_matched_mixed:
-    model: vista
-    branch: count_matched_mixed
-    output_dir: outputs/training/vista_count_matched_mixed
+    branch: fixed_2m
+    output_dir: outputs/training/formal_v1/clip_fixed_2m
+  clip_fixed_3m_fn_off:
+    model: clip
+    branch: fixed_3m_fn_off
+    output_dir: outputs/training/formal_v1/clip_fixed_3m_fn_off
+  clip_fixed_3m_fn_on:
+    model: clip
+    branch: fixed_3m_fn_on
+    output_dir: outputs/training/formal_v1/clip_fixed_3m_fn_on
+  clip_mixed_2m:
+    model: clip
+    branch: mixed_2m
+    output_dir: outputs/training/formal_v1/clip_mixed_2m
+  clip_mixed_3m_fn_off:
+    model: clip
+    branch: mixed_3m_fn_off
+    output_dir: outputs/training/formal_v1/clip_mixed_3m_fn_off
+  clip_mixed_3m_fn_on:
+    model: clip
+    branch: mixed_3m_fn_on
+    output_dir: outputs/training/formal_v1/clip_mixed_3m_fn_on
+  clip_full_3m_fn_off:
+    model: clip
+    branch: full_3m_fn_off
+    output_dir: outputs/training/formal_v1/clip_full_3m_fn_off
+  clip_full_3m_fn_on:
+    model: clip
+    branch: full_3m_fn_on
+    output_dir: outputs/training/formal_v1/clip_full_3m_fn_on
   beit3_standard:
     model: beit3
     branch: standard
-    output_dir: outputs/training/beit3_standard
-  beit3_count_matched_mixed:
+    output_dir: outputs/training/formal_v1/beit3_standard
+  beit3_fixed_2m:
     model: beit3
-    branch: count_matched_mixed
-    output_dir: outputs/training/beit3_count_matched_mixed
+    branch: fixed_2m
+    output_dir: outputs/training/formal_v1/beit3_fixed_2m
+  beit3_fixed_3m_fn_off:
+    model: beit3
+    branch: fixed_3m_fn_off
+    output_dir: outputs/training/formal_v1/beit3_fixed_3m_fn_off
+  beit3_fixed_3m_fn_on:
+    model: beit3
+    branch: fixed_3m_fn_on
+    output_dir: outputs/training/formal_v1/beit3_fixed_3m_fn_on
+  beit3_mixed_2m:
+    model: beit3
+    branch: mixed_2m
+    output_dir: outputs/training/formal_v1/beit3_mixed_2m
+  beit3_mixed_3m_fn_off:
+    model: beit3
+    branch: mixed_3m_fn_off
+    output_dir: outputs/training/formal_v1/beit3_mixed_3m_fn_off
+  beit3_mixed_3m_fn_on:
+    model: beit3
+    branch: mixed_3m_fn_on
+    output_dir: outputs/training/formal_v1/beit3_mixed_3m_fn_on
+  beit3_full_3m_fn_off:
+    model: beit3
+    branch: full_3m_fn_off
+    output_dir: outputs/training/formal_v1/beit3_full_3m_fn_off
+  beit3_full_3m_fn_on:
+    model: beit3
+    branch: full_3m_fn_on
+    output_dir: outputs/training/formal_v1/beit3_full_3m_fn_on
+  vista_standard:
+    model: vista
+    branch: standard
+    output_dir: outputs/training/formal_v1/vista_standard
+  vista_fixed_2m:
+    model: vista
+    branch: fixed_2m
+    output_dir: outputs/training/formal_v1/vista_fixed_2m
+  vista_fixed_3m_fn_off:
+    model: vista
+    branch: fixed_3m_fn_off
+    output_dir: outputs/training/formal_v1/vista_fixed_3m_fn_off
+  vista_fixed_3m_fn_on:
+    model: vista
+    branch: fixed_3m_fn_on
+    output_dir: outputs/training/formal_v1/vista_fixed_3m_fn_on
+  vista_mixed_2m:
+    model: vista
+    branch: mixed_2m
+    output_dir: outputs/training/formal_v1/vista_mixed_2m
+  vista_mixed_3m_fn_off:
+    model: vista
+    branch: mixed_3m_fn_off
+    output_dir: outputs/training/formal_v1/vista_mixed_3m_fn_off
+  vista_mixed_3m_fn_on:
+    model: vista
+    branch: mixed_3m_fn_on
+    output_dir: outputs/training/formal_v1/vista_mixed_3m_fn_on
+  vista_full_3m_fn_off:
+    model: vista
+    branch: full_3m_fn_off
+    output_dir: outputs/training/formal_v1/vista_full_3m_fn_off
+  vista_full_3m_fn_on:
+    model: vista
+    branch: full_3m_fn_on
+    output_dir: outputs/training/formal_v1/vista_full_3m_fn_on
   albef_itc_only:
     model: albef
     branch: itc_only
-    output_dir: outputs/training/albef_itc_only
+    output_dir: outputs/training/formal_v1/albef_itc_only
   albef_full:
     model: albef
     branch: full_albef
-    output_dir: outputs/training/albef_full
+    output_dir: outputs/training/formal_v1/albef_full

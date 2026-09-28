@@ -21,7 +21,7 @@ from datasets.probes import (  # noqa: E402
     validate_manifest_images,
 )
 from embeddings.artifact import save_embedding_artifact  # noqa: E402
-from models.clip_openai import OpenAIClipViTL14Adapter  # noqa: E402
+from model_adapters.clip_openai import OpenAIClipViTL14Adapter  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:

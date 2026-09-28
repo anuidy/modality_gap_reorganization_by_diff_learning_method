@@ -26,7 +26,7 @@ class CheckpointPlanTest(unittest.TestCase):
         self.assertEqual(plan.resume_steps, frozenset({4_000, 8_000, 12_000, 16_000, 20_000}))
         self.assertEqual(plan.resume_retention, 2)
 
-    def test_fractional_targets_round_up_and_final_is_always_included(self):
+    def test_fractional_targets_round_half_up_and_final_is_always_included(self):
         plan = build_checkpoint_plan(
             max_steps=101,
             trajectory_progress_fractions=(0.01, 0.05, 0.20, 0.50, 1.00),
@@ -35,13 +35,25 @@ class CheckpointPlanTest(unittest.TestCase):
 
         self.assertEqual(
             [point.optimizer_step for point in plan.trajectory_points],
-            [2, 6, 21, 51, 101],
+            [1, 5, 20, 51, 101],
         )
-        self.assertEqual(plan.resume_steps, frozenset({21, 41, 61, 81, 101}))
+        self.assertEqual(plan.resume_steps, frozenset({20, 40, 61, 81, 101}))
+
+    def test_formal_batch_36_one_epoch_schedule(self):
+        plan = build_checkpoint_plan(max_steps=540128 // 36)
+        self.assertEqual([p.optimizer_step for p in plan.trajectory_points], [150, 750, 3001, 7502, 15003])
+        self.assertEqual(plan.resume_steps, frozenset({3001, 6001, 9002, 12002, 15003}))
 
     def test_rejects_trajectory_schedule_that_collides_at_small_step_count(self):
         with self.assertRaisesRegex(ValueError, "distinct trajectory"):
             build_checkpoint_plan(max_steps=3)
+
+    def test_model_only_does_not_couple_validation_to_resume_storage(self):
+        plan = build_checkpoint_plan(15003, save_resume_checkpoints=False, validation_progress_interval=.2)
+        self.assertEqual(plan.resume_steps, frozenset())
+        self.assertEqual(plan.resume_retention, 0)
+        self.assertEqual(plan.validation_steps, frozenset({3001, 6001, 9002, 12002, 15003}))
+        self.assertEqual([p.optimizer_step for p in plan.trajectory_points], [150, 750, 3001, 7502, 15003])
 
     def test_rejects_invalid_final_and_retention_settings(self):
         with self.assertRaisesRegex(ValueError, "end at 1.0"):

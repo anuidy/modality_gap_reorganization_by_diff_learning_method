@@ -9,9 +9,8 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from metrics.six_metrics import (  # noqa: E402
+from metrics.representation_metrics import (  # noqa: E402
     compare_geometry_states,
-    compute_six_metrics,
     floating_metric_deltas,
     neighbor_overlap,
     spearman_correlation,
@@ -66,32 +65,6 @@ class TrajectoryMetricTest(unittest.TestCase):
         source = {"metric": {"raw": 1.5, "count": 10}, "protocol": "v1"}
         target = {"metric": {"raw": 2.0, "count": 10}, "protocol": "v1"}
         self.assertEqual(floating_metric_deltas(source, target), {"metric": {"raw": 0.5}})
-
-    def test_m0_six_metric_wrapper_still_saves_reference_after_refactor(self):
-        generator = np.random.default_rng(7)
-        image = generator.normal(size=(12, 3)).astype(np.float32)
-        text = generator.normal(size=(12, 3)).astype(np.float32)
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            reference = root / "reference.npz"
-            metrics = compute_six_metrics(
-                image,
-                text,
-                "manifest",
-                root / "pairs.npz",
-                reference,
-                score_block_size=4,
-            )
-
-            self.assertTrue(reference.is_file())
-            self.assertEqual(
-                metrics["intra_modal_geometry_preservation"]["status"],
-                "m0_reference_saved",
-            )
-            self.assertNotIn(
-                "state_path",
-                metrics["intra_modal_geometry_preservation"],
-            )
 
 
 if __name__ == "__main__":

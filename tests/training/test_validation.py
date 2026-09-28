@@ -43,9 +43,9 @@ class ValidationFakeBackend(TrainingBackend):
 
 class ValidationTest(unittest.TestCase):
     def test_mixed_reports_common_exam_and_two_relation_diagnostics(self):
-        semantic_ids = tuple(f"sample-{index}" for index in range(4))
-        image = torch.randn(4, 8)
-        text = torch.randn(4, 8)
+        semantic_ids = tuple(f"sample-{index}" for index in range(6))
+        image = torch.randn(6, 8)
+        text = torch.randn(6, 8)
         standard = relation_validation_metrics(
             semantic_ids=semantic_ids,
             image=image,
@@ -58,15 +58,15 @@ class ValidationTest(unittest.TestCase):
             image=image,
             text=text,
             logit_scale=10.0,
-            branch="count_matched_mixed",
+            branch="mixed_3m_fn_off",
         )
         self.assertAlmostEqual(
             float(standard["common/I<->T/loss"]),
             float(mixed["common/I<->T/loss"]),
         )
-        self.assertIn("diagnostic/I<->IT/loss", mixed)
-        self.assertIn("diagnostic/T<->IT/loss", mixed)
-        self.assertNotIn("diagnostic/I<->IT/loss", standard)
+        self.assertIn("diagnostic/mixed_3m_fn_off/loss", mixed)
+        self.assertIn("diagnostic/mixed_3m_fn_off/T->IT", mixed)
+        self.assertNotIn("diagnostic/mixed_3m_fn_off/loss", standard)
 
     def test_validation_restores_rng_mode_and_parameters(self):
         backend = ValidationFakeBackend()

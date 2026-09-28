@@ -48,7 +48,7 @@ class TinyClip(TrainingBackend):
         text = self.model.transformer(batch[1]) @ self.model.text_projection
         if self.detach_text:
             text = text.detach()
-        return _relation_step(tuple("abcd"), image, text, self.model.logit_scale.exp(), branch, optimizer_step, None)
+        return _relation_step(tuple("abcdef"), image, text, self.model.logit_scale.exp(), branch, optimizer_step, None)
 
 
 class TinyAlbef(TrainingBackend):
@@ -117,15 +117,15 @@ class TinyAlbef(TrainingBackend):
 class GradientAuditTest(unittest.TestCase):
     def setUp(self):
         torch.manual_seed(13)
-        self.batch = (torch.randn(4, 3), torch.randn(4, 3))
+        self.batch = (torch.randn(6, 3), torch.randn(6, 3))
 
     def test_mixed_relations_restore_parameters_rng_and_modes_without_optimizer(self):
         backend = TinyClip().eval()
         before = state_hashes(backend)
         rng = torch.get_rng_state().clone()
         with patch("torch.optim.AdamW.step", side_effect=AssertionError("optimizer forbidden")):
-            reports = audit_backend(backend, self.batch, branch="count_matched_mixed", seed=4, precision="fp32")
-        self.assertEqual([r["case"] for r in reports], ["I<->T", "I<->IT", "T<->IT"])
+            reports = audit_backend(backend, self.batch, branch="mixed_3m_fn_off", seed=4, precision="fp32")
+        self.assertEqual([r["case"] for r in reports], ["mixed_3m_fn_off"])
         self.assertTrue(all(r["status"] == "pass" for r in reports), reports)
         self.assertEqual(before, state_hashes(backend))
         self.assertTrue(torch.equal(rng, torch.get_rng_state()))
@@ -264,7 +264,7 @@ class GradientAuditTest(unittest.TestCase):
 
     def test_case_matrix(self):
         self.assertEqual(len(audit_cases("standard")), 1)
-        self.assertEqual(len(audit_cases("count_matched_mixed")), 3)
+        self.assertEqual(len(audit_cases("mixed_3m_fn_off")), 1)
         self.assertEqual([x[2] for x in audit_cases("full_albef")], ["total", "ITC", "ITM", "MLM"])
 
     def test_cuda_default_resolves_visible_device_without_implicit_index(self):
@@ -297,13 +297,13 @@ class GradientAuditTest(unittest.TestCase):
             def forward(self, batch, branch, optimizer_step):
                 image = self.model.beit3(visual_tokens=batch[0])["encoder_out"][:, 0]
                 text = self.model.beit3(textual_tokens=batch[1])["encoder_out"][:, 0]
-                return _relation_step(tuple("abcd"), self.model.vision_head(image),
+                return _relation_step(tuple("abcdef"), self.model.vision_head(image),
                                       self.model.language_head(text), self.model.logit_scale.exp(),
                                       branch, optimizer_step, None)
 
         backend = TinyBeit3()
-        batch = (torch.randn(4, 3, 16, 16), torch.randint(0, 32, (4, 5)))
-        reports = audit_backend(backend, batch, branch="count_matched_mixed", seed=4, precision="fp32")
+        batch = (torch.randn(6, 3, 16, 16), torch.randint(0, 32, (6, 5)))
+        reports = audit_backend(backend, batch, branch="mixed_3m_fn_off", seed=4, precision="fp32")
         self.assertTrue(all(r["status"] == "pass" for r in reports), reports)
 
     def test_vista_native_joint_path_counts_include_image_reuse(self):
@@ -332,10 +332,10 @@ class GradientAuditTest(unittest.TestCase):
         backend = VistaTrainingBackend.__new__(VistaTrainingBackend)
         TrainingBackend.__init__(backend, torch.device("cpu"))
         backend.model = VistaModel()
-        batch = SimpleNamespace(images=self.batch[0], text_tokens=self.batch[1], semantic_ids=tuple("abcd"))
-        reports = audit_backend(backend, batch, branch="count_matched_mixed", seed=4, precision="fp32")
+        batch = SimpleNamespace(images=self.batch[0], text_tokens=self.batch[1], semantic_ids=tuple("abcdef"))
+        reports = audit_backend(backend, batch, branch="mixed_3m_fn_off", seed=4, precision="fp32")
         self.assertTrue(all(r["status"] == "pass" for r in reports), reports)
-        self.assertEqual([r["path_calls"]["encode_mm"] for r in reports], [1, 2, 1])
+        self.assertEqual([r["path_calls"]["encode_mm"] for r in reports], [2])
         self.assertNotIn("encode_mm", backend.model.__dict__)
 
     def test_runner_loads_real_batch_and_rejects_incomplete_checkpoint(self):

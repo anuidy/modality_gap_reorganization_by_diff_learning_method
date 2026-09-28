@@ -1,0 +1,77 @@
+schema_version: 1
+scope: beit3_seed42_two_epoch_A_B1_Local_epoch_percent_v2
+output_root: outputs/evaluation/beit3_two_epoch_v2
+points:
+- m0
+- p020
+- p040
+- p060
+- p080
+- p100
+- p120
+- p140
+- p160
+- p180
+- p200
+a:
+  status: confirmed
+  fixed_temperature: 0.1
+  top_ks:
+  - 1
+  - 5
+  - 10
+  norm_ddof: 1
+  negative_plot_samples: 100000
+  histogram_bins: 100
+  seed: 20260825
+  geometry_pair_count: 1000000
+  query_block: 64
+probes:
+  lcs: data/splits/lcs_558k_in_domain_probe_v1.json
+  coco_parent: data/splits/coco_2017_val_probe_v1.json
+  karpathy: data/raw/evaluation_metadata/karpathy/dataset_coco.json
+  coco_derived: data/processed/evaluation/coco_4407_v1.json
+  lcs_image_root: data/raw/lcs_558k/images
+b:
+  data_root: data/raw/mmeb_eval
+  prepared_cache_root: outputs/analysis/pilot_intermediate_gpu_20260921/task_cache
+  tasks:
+  - VisDial
+  - CIRR
+  - VisualNews_t2i
+  - VisualNews_i2t
+  - MSCOCO_t2i
+  - MSCOCO_i2t
+  - NIGHTS
+  - WebQA
+  - OVEN
+  - FashionIQ
+  - EDIS
+  - Wiki-SS-NQ
+  text_mode: official
+  query_count: 1000
+  candidates_per_query: 1000
+b1:
+  caption_policy: all_canonical_raw_sentences
+  query_block: 64
+  datasets:
+    coco:
+      directory: data/raw/coco_karpathy
+      images: 5000
+      captions: 25010
+      annotation_member_sha256: 2fd999220673258012acfb411a4e7e66af7d488050b2519b0badcc49b7600b8d
+    flickr30k:
+      directory: data/raw/flickr30k
+      images: 1000
+      captions: 5000
+      annotation_member_sha256: db779ee2c5df40c25ff0eebeca464f6124b620cc4a9398650aea71fd1b53d4af
+runtime:
+  encoder_batch_size: 32
+  torch_threads: 2
+  gpu_memory_limit_gib: 3.0
+  image_cache_root: outputs/analysis/pilot_intermediate_gpu_20260921/image_cache
+  image_cache_source_root: data/raw/mmeb_eval
+deferred:
+- C
+- Global
+- B3_classification

@@ -9,15 +9,16 @@ import numpy as np
 import torch
 
 from embeddings.artifact import load_embedding_artifact, sha256_file
-from metrics.six_metrics import (
+from metrics.representation_metrics import (
     compare_geometry_states,
     compute_point_metrics,
     floating_metric_deltas,
+    intra_modal_geometry_preservation,
     l2_normalize,
     save_geometry_state,
     save_metrics,
 )
-from models.base import EmbeddingAdapter
+from model_adapters.base import EmbeddingAdapter
 
 
 MODEL_ARTIFACT_NAMES = {
@@ -25,6 +26,44 @@ MODEL_ARTIFACT_NAMES = {
     "vista": "vista_base_stage1",
     "beit3": "beit3_base_itc_patch16_224",
     "albef": "albef_14m_pretrained",
+}
+
+# Where the exported embedding sits relative to the model's own L2 normalization.
+# Measured 2026-09-11 on the stored M0 artifacts: every model's exported rows have
+# norms far from 1, so all four expose a genuine pre-L2 encoder output. VISTA uses
+# the native encoder instantiated with normlized=False.
+REPRESENTATION_BOUNDARY = {
+    "clip": "encoder_output_pre_l2",
+    "beit3": "retrieval_head_output_pre_l2",
+    "vista": "native_encoder_output_normlized_false",
+    "albef": "encoder_output_pre_l2",
+}
+
+# Keys every ``m0 -> checkpoint`` delta must carry. ``floating_metric_deltas``
+# walks the *source* keys and keeps those the target also has, so a delta is
+# bounded by the narrower side. The frozen M0 baseline under outputs/metrics/m0/
+# carries the full metric schema; a delta missing these keys therefore did not
+# come from the baseline.
+M0_REQUIRED_DELTA_KEYS = (
+    "norm_imbalance",
+    "anisotropy_image",
+    "anisotropy_text",
+    "anisotropy_gap",
+    "cross_modal_alignment",
+)
+
+# Only these models define an additive e_IT = e_I + e_T in the experiment; VISTA
+# uses its native joint encoder through encode_multimodal, and ALBEF
+# deliberately has no artificial IT.
+ADDITIVE_IT_MODELS = frozenset({"clip", "beit3"})
+
+PROBE_DATASET = {
+    "coco_2017_val_5k": "coco_2017_val",
+    "lcs_558k_in_domain_10k": "lcs_558k",
+}
+PROBE_SPLIT = {
+    "coco_2017_val_5k": "val",
+    "lcs_558k_in_domain_10k": "in_domain",
 }
 
 
@@ -73,6 +112,22 @@ def load_completed_run_manifest(run_directory: Path) -> dict[str, Any]:
     return manifest
 
 
+def load_evaluation_run_manifest(run_directory: Path, *, allow_running: bool = False) -> dict[str, Any]:
+    """Read evaluation provenance; live snapshots require explicit opt-in."""
+    manifest = _read_json(run_directory / "run_manifest.json")
+    if allow_running and manifest.get("status") == "running":
+        if not isinstance(manifest.get("checkpoint_policy"), dict):
+            raise ValueError("Run manifest does not contain a checkpoint policy.")
+        return manifest
+    if manifest.get("status") not in {"complete", "paused"}:
+        raise ValueError("Evaluate only complete or paused training tasks.")
+    if not isinstance(manifest.get("checkpoint_policy"), dict):
+        raise ValueError("Run manifest does not contain a checkpoint policy.")
+    if type(manifest.get("completed_steps")) is not int or manifest["completed_steps"] <= 0:
+        raise ValueError("Stopped task has no valid completed-step count.")
+    return manifest
+
+
 def _inside_directory(path: Path, directory: Path) -> Path:
     resolved = path.resolve()
     root = directory.resolve()
@@ -115,19 +170,35 @@ def _validate_snapshot_provenance(
 def resolve_trajectory_snapshots(
     run_directory: Path,
     run_manifest: dict[str, Any],
+    *,
+    labels: tuple[str, ...] | None = None,
+    allow_running: bool = False,
 ) -> tuple[SnapshotSpec, ...]:
     points = run_manifest["checkpoint_policy"].get("trajectory_points")
     if not isinstance(points, list) or not points:
         raise ValueError("Run manifest contains no trajectory points.")
+    if labels is not None:
+        known = {str(point["label"]) for point in points}
+        if not labels or len(set(labels)) != len(labels) or not set(labels) <= known:
+            raise ValueError("Requested trajectory labels must be unique, nonempty, and declared.")
+        points = [point for point in points if str(point["label"]) in labels]
+        if not (allow_running and run_manifest.get("status") == "running") and any(int(point["optimizer_step"]) > run_manifest.get("completed_steps", -1) for point in points):
+            raise ValueError("Requested checkpoint is beyond the task's completed steps.")
     snapshots: list[SnapshotSpec] = []
     for point in points:
         label = str(point["label"])
         optimizer_step = int(point["optimizer_step"])
         progress_fraction = float(point["progress_fraction"])
-        if progress_fraction == 1.0:
+        final_step = run_manifest["config"].get("max_steps")
+        # Historical minimal manifests used total-budget fractions and omitted max_steps.
+        is_final = optimizer_step == int(final_step) if final_step is not None else progress_fraction == 1.0
+        if is_final:
             metadata_path = run_directory / "checkpoints" / "final.json"
             metadata = _read_json(metadata_path)
-            checkpoint_kind = "full_resume"
+            checkpoint_kind = (
+                "trajectory_model" if metadata.get("checkpoint_kind") in {"trajectory_model", "final_trajectory_model"}
+                else "full_resume"
+            )
             checkpoint_path = run_directory / str(metadata["path"])
         else:
             metadata_path = (
@@ -140,9 +211,12 @@ def resolve_trajectory_snapshots(
             checkpoint_kind = "trajectory_model"
             checkpoint_path = metadata_path.parent / str(metadata["path"])
         checkpoint_path = _inside_directory(checkpoint_path, run_directory)
+        if allow_running and not checkpoint_path.is_file():
+            raise FileNotFoundError(checkpoint_path)
         if metadata.get("checkpoint_kind") not in {
             checkpoint_kind,
-            "final_full_resume" if progress_fraction == 1.0 else checkpoint_kind,
+            ("final_full_resume" if checkpoint_kind == "full_resume" else "final_trajectory_model")
+            if is_final else checkpoint_kind,
         }:
             raise ValueError(f"Unexpected checkpoint metadata kind for {label}.")
         _validate_snapshot_provenance(
@@ -208,15 +282,32 @@ def compute_point_output(
     pair_index_path: Path,
     score_block_size: int,
     snapshot: dict[str, Any],
+    *,
+    model_name: str | None = None,
+    m0_geometry_state_path: Path | None = None,
 ) -> PointOutput:
     sample_ids, image_embeddings, text_embeddings = load_embedding_artifact(artifact_path)
     metadata = _read_json(metadata_path)
     if metadata.get("artifact", {}).get("sha256") != sha256_file(artifact_path):
         raise ValueError("Embedding artifact SHA-256 does not match its metadata.")
+    resolved_model = model_name or str(metadata.get("model_name", ""))
+    identity = {
+        "model": resolved_model or None,
+        "training_regime": snapshot.get("branch") or snapshot.get("label"),
+        "checkpoint": str(artifact_path),
+        "global_step": snapshot.get("optimizer_step"),
+        "training_progress": snapshot.get("progress_fraction"),
+        "dataset": PROBE_DATASET.get(str(metadata.get("probe_name")), str(metadata.get("probe_name"))),
+        "split": PROBE_SPLIT.get(str(metadata.get("probe_name")), "unknown"),
+        "sample_count": int(len(sample_ids)),
+    }
     metrics = compute_point_metrics(
         image_embeddings,
         text_embeddings,
         score_block_size=score_block_size,
+        representation_boundary=REPRESENTATION_BOUNDARY.get(resolved_model, "unknown"),
+        raw_available=True,
+        identity=identity,
     )
     metrics["intra_modal_geometry_state"] = save_geometry_state(
         l2_normalize(image_embeddings),
@@ -225,6 +316,15 @@ def compute_point_output(
         pair_index_path,
         geometry_state_path,
     )
+    # §6: intra-modal geometry preservation is M0 vs this checkpoint, computed on
+    # the shared fixed pair indices. Adjacent-point drift stays available as the
+    # separate transition records.
+    if m0_geometry_state_path is not None:
+        preservation = intra_modal_geometry_preservation(m0_geometry_state_path, geometry_state_path)
+        metrics["intra_geometry_image"] = preservation["image"]
+        metrics["intra_geometry_text"] = preservation["text"]
+        metrics.setdefault("auxiliary_metrics", {}).update(preservation["auxiliary"])
+        metrics["auxiliary_metrics"]["intra_geometry_reference"] = "m0"
     metrics["artifact"] = {
         "path": str(artifact_path),
         "metadata_path": str(metadata_path),
@@ -258,6 +358,15 @@ def compute_adjacent_transition(
         raise ValueError("Adjacent trajectory points use different probe manifests.")
     source_metrics = _read_json(source.metrics_path)
     target_metrics = _read_json(target.metrics_path)
+    delta = floating_metric_deltas(source_metrics, target_metrics)
+    if source.label == "m0":
+        missing = [key for key in M0_REQUIRED_DELTA_KEYS if key not in delta]
+        if missing:
+            raise ValueError(
+                "An m0 -> checkpoint delta must be computed from the frozen M0 baseline under "
+                f"outputs/metrics/m0/, but the source metrics {source.metrics_path} cannot supply "
+                f"{missing}."
+            )
     transition = {
         "schema_version": 1,
         "source": {
@@ -272,10 +381,7 @@ def compute_adjacent_transition(
         },
         "probe_name": source_metadata["probe_name"],
         "probe_manifest_sha256": source_metadata["probe_manifest_sha256"],
-        "point_metric_delta_target_minus_source": floating_metric_deltas(
-            source_metrics,
-            target_metrics,
-        ),
+        "point_metric_delta_target_minus_source": delta,
         "intra_modal_geometry_preservation": compare_geometry_states(
             source.geometry_state_path,
             target.geometry_state_path,

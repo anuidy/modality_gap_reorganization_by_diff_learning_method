@@ -1,5 +1,6 @@
 import sys
 import unittest
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -15,21 +16,26 @@ CONFIG_PATH = PROJECT_ROOT / "configs" / "training" / "train_runs.yaml"
 
 
 class TrainingConfigTest(unittest.TestCase):
-    def test_formal_matrix_contains_exactly_eight_locked_runs(self):
+    def test_formal_matrix_contains_all_formal_branch_templates(self):
         payload = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8"))
         validate_experiment_matrix(payload)
         self.assertEqual(set(payload["runs"]), set(EXPECTED_RUNS))
 
     def test_unfrozen_hyperparameters_fail_fast(self):
-        with self.assertRaisesRegex(ValueError, "not frozen"):
-            load_run_config(CONFIG_PATH, "clip_standard", PROJECT_ROOT)
+        payload = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8"))
+        payload["controls"]["seed"] = None
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "unfrozen.yaml"
+            path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "not frozen"):
+                load_run_config(path, "clip_standard", PROJECT_ROOT)
 
     def test_programmatic_overrides_resolve_a_run(self):
         overrides = {
             "train_manifest": "data/train.jsonl",
             "image_root": "data/images",
             "seed": 7,
-            "micro_batch_size": 8,
+            "micro_batch_size": 6,
             "gradient_accumulation": 2,
             "optimizer_type": "adamw",
             "learning_rate": 1e-5,
@@ -43,10 +49,10 @@ class TrainingConfigTest(unittest.TestCase):
             "augmentation_scale_max": 1.0,
             "augmentation_hflip": 0.5,
         }
-        config = load_run_config(CONFIG_PATH, "clip_count_matched_mixed", PROJECT_ROOT, overrides)
+        config = load_run_config(CONFIG_PATH, "clip_mixed_3m_fn_off", PROJECT_ROOT, overrides)
         self.assertEqual(config.model_name, "clip")
-        self.assertEqual(config.branch, "count_matched_mixed")
-        self.assertEqual(config.effective_batch_size, 16)
+        self.assertEqual(config.branch, "mixed_3m_fn_off")
+        self.assertEqual(config.effective_batch_size, 12)
         self.assertEqual(config.trajectory_progress_fractions, (0.01, 0.05, 0.20, 0.50, 1.00))
         self.assertEqual(config.resume_progress_interval, 0.20)
         self.assertEqual(config.resume_retention, 2)

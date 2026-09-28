@@ -36,14 +36,12 @@ def overrides(gradient_accumulation: int) -> dict[str, object]:
 
 
 class AlbefQueueConfigTest(unittest.TestCase):
-    def test_effective_batch_must_divide_native_queue_size(self):
-        with self.assertRaisesRegex(ValueError, "effective_batch_size"):
-            load_run_config(
-                CONFIG_PATH,
-                "albef_itc_only",
-                PROJECT_ROOT,
-                overrides(gradient_accumulation=3),
-            )
+    def test_batch_36_is_accepted_without_changing_queue_capacity(self):
+        values = overrides(gradient_accumulation=1)
+        values["micro_batch_size"] = 36
+        config = load_run_config(CONFIG_PATH, "albef_itc_only", PROJECT_ROOT, values)
+        self.assertEqual(config.micro_batch_size, 36)
+        self.assertEqual(config.model_options["queue_size"], 65536)
 
     def test_effective_batch_that_divides_queue_is_accepted(self):
         config = load_run_config(

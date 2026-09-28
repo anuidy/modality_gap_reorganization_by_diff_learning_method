@@ -21,19 +21,19 @@ from torchvision import transforms
 from torchvision.transforms import InterpolationMode
 
 from datasets.training_pairs import RawTrainingBatch
-from models.albef import ALBEF_SOURCE_ROOT, _official_albef_class, _pre_caption
-from models.beit3 import BEIT3_SOURCE_ROOT
-from models.vista import VISTA_SOURCE_ROOT
+from model_adapters.albef import ALBEF_SOURCE_ROOT, _official_albef_class, _pre_caption
+from model_adapters.beit3 import BEIT3_SOURCE_ROOT
+from model_adapters.vista import VISTA_SOURCE_ROOT
 from objectives.contrastive import (
     ObjectiveResult,
     RelationAudit,
     RepresentationBatch,
     additive_multimodal_embedding,
-    count_matched_mixed_objective,
-    relation_for_optimizer_step,
-    standard_objective,
+    training_objective,
+    BRANCH_DEFINITIONS,
 )
 from training.albef_accumulation import DeferredAlbefStateUpdates
+from training.randomness import stream_seed
 
 
 CLIP_MEAN = (0.48145466, 0.4578275, 0.40821073)
@@ -52,6 +52,7 @@ class TrainingStepResult:
     loss: torch.Tensor
     metrics: Mapping[str, torch.Tensor]
     audit: RelationAudit | None
+    logit_scale: torch.Tensor | float | None = None
 
 
 @contextlib.contextmanager
@@ -60,7 +61,7 @@ def _seeded_augmentation(seed: int):
     try:
         random.seed(seed)
         with torch.random.fork_rng(devices=[]):
-            torch.manual_seed(seed)
+            torch.random.default_generator.manual_seed(seed)
             yield
     finally:
         random.setstate(python_state)
@@ -102,34 +103,21 @@ def _build_train_transform(
 
 
 def _relation_step(
-    semantic_ids: tuple[str, ...],
-    image: torch.Tensor,
-    text: torch.Tensor,
-    logit_scale: float | torch.Tensor,
-    branch: str,
-    optimizer_step: int,
-    joint_encoder: Callable[[], torch.Tensor] | None,
+    semantic_ids: tuple[str, ...], image: torch.Tensor, text: torch.Tensor,
+    logit_scale: float | torch.Tensor, branch: str, optimizer_step: int,
+    joint_encoder: Callable[[], torch.Tensor] | None, *, master_seed: int = 0,
 ) -> TrainingStepResult:
-    image = F.normalize(image, dim=-1)
-    text = F.normalize(text, dim=-1)
-    if branch == "standard":
-        objective = standard_objective(logit_scale)
-        representations = {"I": image, "T": text}
-    elif branch == "count_matched_mixed":
-        relation = relation_for_optimizer_step(optimizer_step)
-        representations = {"I": image, "T": text}
-        if "IT" in relation:
-            multimodal = joint_encoder() if joint_encoder is not None else additive_multimodal_embedding(image, text)
-            representations["IT"] = F.normalize(multimodal, dim=-1)
-        objective = count_matched_mixed_objective(logit_scale, relation)
-    else:
-        raise ValueError(f"Unsupported relation branch: {branch}")
-
-    result: ObjectiveResult = objective(
-        RepresentationBatch(semantic_ids=semantic_ids, representations=representations)
+    if branch not in BRANCH_DEFINITIONS:
+        raise ValueError(f"Unsupported formal relation branch: {branch}")
+    representations = {"I": image, "T": text}
+    if branch not in {"standard", "fixed_2m"}:
+        representations["IT"] = joint_encoder() if joint_encoder is not None else additive_multimodal_embedding(image, text)
+    objective = training_objective(
+        logit_scale, branch, group_seed=stream_seed(master_seed, "group", optimizer_step)
     )
-    metrics = {"loss": result.loss, **{f"loss/{name}": value for name, value in result.directional_losses.items()}}
-    return TrainingStepResult(loss=result.loss, metrics=metrics, audit=result.audit)
+    result = objective(RepresentationBatch(semantic_ids=semantic_ids, representations=representations))
+    metrics = {"loss": result.loss, **{f"loss/{name}": value for name, value in result.directional_losses.items()}, **result.debug_metrics}
+    return TrainingStepResult(loss=result.loss, metrics=metrics, audit=result.audit, logit_scale=logit_scale)
 
 
 class TrainingBackend(nn.Module, ABC):
@@ -140,11 +128,15 @@ class TrainingBackend(nn.Module, ABC):
         if device.type == "cuda" and not torch.cuda.is_available():
             raise RuntimeError("CUDA was requested but is unavailable.")
         self.device = device
+        self.random_seed = 0
         # Native CLIP/VISTA loaders are strict. BEiT-3/ALBEF expose their
         # permissive-load result so an independent preflight can reject gaps.
         self.checkpoint_load_report: dict[str, list[str]] = {
             "missing_keys": [], "unexpected_keys": []
         }
+
+    def set_random_seed(self, seed: int) -> None:
+        self.random_seed = seed
 
     @abstractmethod
     def prepare_batch(self, batch: RawTrainingBatch, augmentation_seed: int) -> PreparedBatch:
@@ -226,6 +218,7 @@ class ClipTrainingBackend(TrainingBackend):
             branch,
             optimizer_step,
             joint_encoder=None,
+            master_seed=self.random_seed,
         )
 
     def after_optimizer_step(self) -> None:
@@ -280,42 +273,14 @@ class VistaTrainingBackend(TrainingBackend):
         )
 
     def forward(self, batch: PreparedBatch, branch: str, optimizer_step: int) -> TrainingStepResult:
-        if branch == "standard":
-            relation = "I<->T"
-            objective = standard_objective(1.0 / float(self.model.temperature))
-        elif branch == "count_matched_mixed":
-            relation = relation_for_optimizer_step(optimizer_step)
-            objective = count_matched_mixed_objective(
-                1.0 / float(self.model.temperature), relation
-            )
-        else:
-            raise ValueError(f"Unsupported relation branch: {branch}")
-
-        required_modalities = {
-            "I<->T": ("I", "T"),
-            "I<->IT": ("I", "IT"),
-            "T<->IT": ("T", "IT"),
-        }[relation]
-        representations: dict[str, torch.Tensor] = {}
-        if "I" in required_modalities:
-            representations["I"] = F.normalize(self.model.encode_image(batch.images), dim=-1)
-        if "T" in required_modalities:
-            representations["T"] = F.normalize(self.model.encode_text(batch.text_tokens), dim=-1)
-        if "IT" in required_modalities:
-            representations["IT"] = F.normalize(
-                self.model.encode_mm(batch.images, batch.text_tokens), dim=-1
-            )
-        result = objective(
-            RepresentationBatch(
-                semantic_ids=batch.semantic_ids,
-                representations=representations,
-            )
+        image = self.model.encode_image(batch.images)
+        text = self.model.encode_text(batch.text_tokens)
+        return _relation_step(
+            batch.semantic_ids, image, text, 1.0 / float(self.model.temperature),
+            branch, optimizer_step,
+            joint_encoder=lambda: self.model.encode_mm(batch.images, batch.text_tokens),
+            master_seed=self.random_seed,
         )
-        metrics = {
-            "loss": result.loss,
-            **{f"loss/{name}": value for name, value in result.directional_losses.items()},
-        }
-        return TrainingStepResult(loss=result.loss, metrics=metrics, audit=result.audit)
 
 
 def _install_torch_six_compatibility() -> None:
@@ -392,12 +357,11 @@ class Beit3TrainingBackend(TrainingBackend):
 
     def forward(self, batch: PreparedBatch, branch: str, optimizer_step: int) -> TrainingStepResult:
         input_ids, padding_mask = batch.text_tokens
-        image, text = self.model(
-            image=batch.images,
-            text_description=input_ids,
-            padding_mask=padding_mask,
-            only_infer=True,
-        )
+        # Obtain pre-L2 head outputs; the official retrieval wrapper normalizes.
+        image_output = self.model.beit3(textual_tokens=None, visual_tokens=batch.images, text_padding_position=None)
+        image = self.model.vision_head(image_output["encoder_out"][:, 0, :])
+        text_output = self.model.beit3(textual_tokens=input_ids, visual_tokens=None, text_padding_position=padding_mask)
+        text = self.model.language_head(text_output["encoder_out"][:, 0, :])
         return _relation_step(
             batch.semantic_ids,
             image,
@@ -406,6 +370,7 @@ class Beit3TrainingBackend(TrainingBackend):
             branch,
             optimizer_step,
             joint_encoder=None,
+            master_seed=self.random_seed,
         )
 
     def after_optimizer_step(self) -> None:
@@ -433,6 +398,26 @@ def _safe_concat_all_gather(tensor: torch.Tensor) -> torch.Tensor:
     gathered = [torch.ones_like(tensor) for _ in range(dist.get_world_size())]
     dist.all_gather(gathered, tensor, async_op=False)
     return torch.cat(gathered, dim=0)
+
+
+@torch.no_grad()
+def _circular_albef_enqueue(self: nn.Module, image_features: torch.Tensor, text_features: torch.Tensor) -> None:
+    """Preserve the FIFO queue for batch sizes that do not divide its capacity."""
+    image_features = _safe_concat_all_gather(image_features)
+    text_features = _safe_concat_all_gather(text_features)
+    capacity = self.image_queue.shape[1]
+    count = image_features.shape[0]
+    if image_features.shape != text_features.shape or not 0 < count <= capacity:
+        raise ValueError("ALBEF queue requires aligned features and a batch within capacity.")
+    pointer = int(self.queue_ptr.item())
+    if not 0 <= pointer < capacity:
+        raise ValueError("Invalid ALBEF queue pointer.")
+    first = min(count, capacity - pointer)
+    for queue, features in ((self.image_queue, image_features), (self.text_queue, text_features)):
+        queue[:, pointer:pointer + first] = features[:first].T
+        if first < count:
+            queue[:, :count - first] = features[first:].T
+    self.queue_ptr[0] = (pointer + count) % capacity
 
 
 def _device_safe_albef_mask(
@@ -522,6 +507,7 @@ class AlbefTrainingBackend(TrainingBackend):
             raise RuntimeError(f"Unexpected ALBEF checkpoint keys: {load_result.unexpected_keys[:5]}")
         self.model.__class__.forward.__globals__["concat_all_gather"] = _safe_concat_all_gather
         self.model.mask = types.MethodType(_device_safe_albef_mask, self.model)
+        self.model._dequeue_and_enqueue = types.MethodType(_circular_albef_enqueue, self.model)
         self.model.to(device)
         self._deferred_state_updates = DeferredAlbefStateUpdates()
         self.max_text_tokens = int(options.get("max_text_tokens", 30))

@@ -40,22 +40,22 @@ def fake_backend() -> VistaTrainingBackend:
 class VistaRoutingTest(unittest.TestCase):
     def setUp(self):
         self.batch = PreparedBatch(
-            semantic_ids=("0", "1", "2", "3"),
-            images=torch.randn(4, 8),
-            text_tokens=torch.randn(4, 8),
+            semantic_ids=tuple(str(i) for i in range(6)),
+            images=torch.randn(6, 8),
+            text_tokens=torch.randn(6, 8),
         )
 
-    def test_i_to_it_omits_unused_standalone_text_forward(self):
+    def test_mixed_encodes_all_modalities_for_full_batch_candidates(self):
         backend = fake_backend()
-        result = backend(self.batch, "count_matched_mixed", 1)
-        self.assertEqual(result.audit.relation, "I<->IT")
-        self.assertEqual(backend.model.calls, {"I": 1, "T": 0, "IT": 1})
+        result = backend(self.batch, "mixed_3m_fn_off", 1)
+        self.assertEqual(result.audit.relation, "I<->T+I<->IT+T<->IT")
+        self.assertEqual(backend.model.calls, {"I": 1, "T": 1, "IT": 1})
 
-    def test_t_to_it_omits_unused_standalone_image_forward(self):
+    def test_fixed_2m_omits_joint_forward(self):
         backend = fake_backend()
-        result = backend(self.batch, "count_matched_mixed", 2)
-        self.assertEqual(result.audit.relation, "T<->IT")
-        self.assertEqual(backend.model.calls, {"I": 0, "T": 1, "IT": 1})
+        result = backend(self.batch, "fixed_2m", 2)
+        self.assertEqual(result.audit.relation, "I<->T")
+        self.assertEqual(backend.model.calls, {"I": 1, "T": 1, "IT": 0})
 
 
 if __name__ == "__main__":

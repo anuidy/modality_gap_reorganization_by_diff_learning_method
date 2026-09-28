@@ -5,11 +5,11 @@
 | 数据 | 精确数量 | 允许用途 | 禁止用途 |
 |---|---:|---|---|
 | LCS Train | 540,128 | 参数更新 | Probe、跨分支重采样 |
-| LCS Validation | 8,000 | 训练过程监控 | 参数更新、checkpoint selection、六项表示指标 |
-| LCS In-domain Probe | 10,000 | M0/训练后六项表示指标 | 训练、early stopping、调参、checkpoint selection |
-| COCO 2017 Val Probe | 5,000 | 外部分布六项表示指标 | 训练、early stopping、调参、checkpoint selection |
+| LCS Validation | 8,000 | 训练过程监控 | 参数更新、checkpoint selection、八项表示指标 |
+| LCS In-domain Probe | 10,000 | M0/训练后八项表示指标 | 训练、early stopping、调参、checkpoint selection |
+| COCO 2017 Val Probe | 5,000 | 外部分布八项表示指标 | 训练、early stopping、调参、checkpoint selection |
 
-四个模型和八个训练 run 共用同一组 manifest。`Standard`、`Mixed`、`ITC-only`、`Full ALBEF` 只改变模型目标或 representation relation，不改变样本集合。
+所有正式训练分支共用同一组 manifest。`Standard`、`Mixed`、`ITC-only`、`Full ALBEF` 只改变模型目标或 representation relation，不改变样本集合。
 
 ## 固定拆分
 
@@ -72,14 +72,14 @@ data/raw/coco_2017_val/extracted/
 python scripts/data/prepare_formal_datasets.py
 ```
 
-该命令不会重新抽取已固定 Probe，也不会覆盖不匹配的 manifest。它依据 Git 中的 split lock 生成：
+该命令不会重新抽取已固定 Probe，也不会覆盖不匹配的 manifest。Git只保存无样本内容的协议模板`configs/data/lcs_558k_split_lock_v1.json`。源码新副本先运行`python scripts/data/restore_protocol_metadata.py`恢复运行时锁文件；实际probe清单仍需从服务器资源包取得。该命令依据运行时split lock生成：
 
 ```text
 data/processed/lcs_558k/manifests/train_v1.jsonl
 data/processed/lcs_558k/manifests/validation_v1.jsonl
 ```
 
-`data/processed/` 不进入 Git；在 AutoDL 上由同一源标注确定性重建，输出 SHA 必须与本手册一致。
+整个`data/`目录不进入Git；本地只保留probe相关资源，Train/Validation和下游评测数据仅保留服务器。`data/processed/`不进入Git；在 AutoDL 上由同一源标注确定性重建，输出 SHA 必须与本手册一致。
 
 只校验清单和拆分：
 
@@ -99,4 +99,8 @@ python scripts/data/prepare_formal_datasets.py --validate-only --verify-images
 
 `configs/training/train_runs.yaml` 已锁定 Train、Validation、两套 Probe 和 split lock 的路径及 SHA。训练启动前会验证这些身份；文件被修改、不同分支换用其他 Train 清单、或把 Probe 路径换成 Train 路径时都会失败。
 
-训练引擎只从 LCS Train 创建参数更新 DataLoader，因此 Probe 不可能进入梯度更新。固定 Validation 8K 使用独立 DataLoader，在每个完整 resume checkpoint 后以只读方式运行，结果写入 `validation_metrics.jsonl`。当前 Pilot 候选 interval 为 20%、40%、60%、80%、100%，正式 interval 在 Pilot 后重新确认。所有分支报告公共指标，Mixed/Full 额外报告分支诊断；Validation 始终不用于选择 checkpoint。完整定义见 `configs/training/VALIDATION_PROTOCOL.md`。
+训练引擎只从 LCS Train 创建参数更新 DataLoader，因此 Probe 不可能进入梯度更新。固定 Validation 8K 使用独立 DataLoader，按配置中的 validation interval 只读运行，结果写入 `validation_metrics.jsonl`。已完成的三轮计划每20%执行验证、每50%保存完整恢复点，两者互相独立；后续五轮配置尚未实施。验证batch=36，固定丢弃清单末尾8条，实际7992条/222批。所有分支报告公共指标，Mixed/Full 额外报告分支诊断；Validation 始终不用于选择 checkpoint。完整定义见 `configs/training/VALIDATION_PROTOCOL.md`。
+
+## 存储与资源身份
+
+服务器保留全部原始数据与生成清单。本地不保留完整源标注和Train/Validation清单；LCS probe可使用`data/raw/lcs_558k/probe_images/`。COCO保留probe图片与caption标注。原始/最终权重可留本地但不得提交GitHub。协议模板和资源SHA是配置知识，保存在`configs/data/`与`configs/resources/`，不包含真实样本。

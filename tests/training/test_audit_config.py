@@ -37,6 +37,11 @@ class AuditConfigTest(unittest.TestCase):
     def test_unfrozen_training_settings_are_untouched_and_not_required(self):
         with tempfile.TemporaryDirectory() as temp:
             path = self.fixture(Path(temp))
+            payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+            payload["controls"]["seed"] = None
+            payload["controls"]["optimizer"]["learning_rate"] = None
+            payload["controls"]["budget"]["max_steps"] = None
+            path.write_text(yaml.safe_dump(payload), encoding="utf-8")
             original = path.read_bytes()
             config = self.load(path)
             self.assertEqual(config.batch_size, 4)

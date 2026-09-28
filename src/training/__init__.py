@@ -1,1 +1,1 @@
-"""Reproducible training runtime for the locked eight-run experiment matrix."""
+"""Reproducible single-GPU training for the formal representation experiments."""

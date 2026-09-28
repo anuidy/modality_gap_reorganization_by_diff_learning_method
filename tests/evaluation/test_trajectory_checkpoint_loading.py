@@ -17,7 +17,7 @@ from evaluation.trajectory import (  # noqa: E402
     mark_snapshot_evaluated,
     resolve_trajectory_snapshots,
 )
-from models.base import EmbeddingAdapter  # noqa: E402
+from model_adapters.base import EmbeddingAdapter  # noqa: E402
 
 
 class FakeAdapter(EmbeddingAdapter):

@@ -1,0 +1,19 @@
+* text=auto
+.gitattributes text eol=lf
+.gitignore text eol=lf
+*.py text eol=lf
+*.sh text eol=lf
+*.md text eol=lf
+*.yaml text eol=lf
+*.txt text eol=lf
+
+# This immutable protocol descriptor is addressed by its exact SHA-256.
+configs/data/lcs_558k_split_lock_v1.json -text
+*.sha256 -text
+data/** -text
+*.pt binary
+*.pth binary
+*.ckpt binary
+*.safetensors binary
+*.npz binary
+*.npy binary

@@ -10,7 +10,7 @@ from PIL import Image
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from models.factory import create_m0_adapter  # noqa: E402
+from model_adapters.factory import create_m0_adapter  # noqa: E402
 
 
 def main() -> None:

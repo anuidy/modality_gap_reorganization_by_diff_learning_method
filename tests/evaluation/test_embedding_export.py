@@ -13,7 +13,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from datasets.probes import ProbeManifest, ProbeSample  # noqa: E402
 from evaluation.embedding_export import export_raw_embeddings  # noqa: E402
-from models.base import EmbeddingAdapter  # noqa: E402
+from model_adapters.base import EmbeddingAdapter  # noqa: E402
 
 
 class FakeAdapter(EmbeddingAdapter):

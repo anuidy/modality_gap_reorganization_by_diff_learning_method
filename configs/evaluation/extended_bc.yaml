@@ -1,0 +1,30 @@
+schema_version: 1
+status: confirmed_code_only_not_enqueued
+output_root: outputs/evaluation/extended_v1
+runtime:
+  encoder_batch_size: 32
+  memory_gib: 3
+  torch_threads: 2
+b3:
+  prepared_directory: data/raw/imagenet_b3
+  template_file: configs/evaluation/imagenet_clip_80.json
+  template_aggregation: normalize_each_template_then_mean_then_normalize
+global:
+  prepared_directory: data/processed/evaluation/mbeir_global
+  minimum_candidates: 5000000
+  shard_rows: 8192
+  query_block: 32
+  candidate_block: 8192
+  calibration: task_by_candidate_modality_negative_mean
+  calibration_split: official_val_disjoint_from_test
+  calibration_weighting: equal_query_weight_then_all_nonrelevant_candidates_by_modality
+  oracle: union_of_all_relevant_answer_modalities
+  text_policy: native_text_no_added_instruction
+  primary_recall_definition: any_relevant_in_top_k
+c:
+  execution: only_after_declared_A_B_scopes_complete
+  expected_seeds: [42, 43, 44]
+  confidence_level: 0.95
+  c1: paired_seed_differences_mean_sample_std_student_t
+  c2: current_minus_same_model_M0
+  c3: linkage_data_only_no_association_or_significance

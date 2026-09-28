@@ -95,6 +95,45 @@ def create_coco_2017_val_manifest(
     return load_coco_manifest(destination, project_root)
 
 
+def load_probe_manifest(path: Path, project_root: Path) -> ProbeManifest:
+    """Load a probe manifest written in the canonical schema.
+
+    Canonical sample records carry ``sample_id``, ``semantic_id``,
+    ``image_relpath`` (relative to the project root) and ``caption``; the payload
+    carries ``probe_name``. New probes should use this schema, so no per-probe
+    loader is needed. The two named loaders below keep supporting the legacy
+    COCO/LCS layouts.
+    """
+
+    payload = _read_json(path)
+    required = {"sample_id", "semantic_id", "image_relpath", "caption"}
+    samples = []
+    for index, record in enumerate(payload["samples"]):
+        missing = sorted(required - set(record))
+        if missing:
+            raise ValueError(
+                f"{path}: sample {index} is missing {missing}; a canonical probe manifest needs "
+                f"{sorted(required)}."
+            )
+        samples.append(
+            ProbeSample(
+                sample_id=record["sample_id"],
+                semantic_id=record["semantic_id"],
+                image_path=project_root / record["image_relpath"],
+                text=record["caption"],
+            )
+        )
+    if "probe_name" not in payload:
+        raise ValueError(f"{path}: a canonical probe manifest must declare probe_name.")
+    return ProbeManifest(
+        name=payload["probe_name"],
+        path=path,
+        sha256=sha256_file(path),
+        samples=tuple(samples),
+        metadata=payload,
+    )
+
+
 def load_coco_manifest(path: Path, project_root: Path) -> ProbeManifest:
     payload = _read_json(path)
     samples = tuple(

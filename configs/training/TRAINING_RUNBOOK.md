@@ -1,111 +1,77 @@
 # 正式训练运行手册
 
-本目录现在包含正式 8-run 矩阵的可执行训练配置。代码不会把 COCO 5K 或 LCS 10K probe 当成训练集，也不会替研究者猜测尚未冻结的超参数。
+**状态更新（2026-09-28）：训练已暂停，已完成实验和下一轮决策以[当前实验状态](CURRENT_EXPERIMENT_STATUS.md)为准。下一轮恢复九分支并计划五轮，但新配置、81项矩阵及滚动保存尚未实施。下文中的旧轮数、FN取消、79项矩阵和“当前运行”均属于当时协议记录，不是新机器的自动执行计划。**
 
-## 代码位置
+当前训练协议见 [EXPERIMENT_PROTOCOL.md](EXPERIMENT_PROTOCOL.md)，硬件运行方式见 [单/双4090说明](EXECUTION_MODES.md)。代码已接入九分支、raw sum、同一步Mixed分组、FN屏蔽、独立随机流、验证尾批和四舍五入保存点。正式seed为42/43/44；默认单任务与gate使用42，VISTA Fixed-2M使用42。
 
-- `src/datasets/training_pairs.py`：训练 manifest、唯一 semantic instance 校验和确定性采样。
-- `src/objectives/contrastive.py`：Standard 与 Count-Matched Mixed 的双向对比目标。
-- `src/training/backends.py`：CLIP、VISTA、BEiT-3、ALBEF 的可训练后端。
-- `src/training/config.py`：8-run 矩阵和控制变量校验。
-- `src/training/engine.py`：单卡 A800 的 BF16、梯度累积、日志、断点与 checkpoint。
-- `scripts/training/train.py`：单个 run 的命令入口。
-- `scripts/training/audit_gradients.py`：独立真实批次梯度审计，不执行参数优化步骤。
-- `scripts/training/run_all.sh`：配置完成后依次校验并运行 8 个分支。
+## 原1轮完整单seed入口（历史计划）
 
-## 训练数据 manifest
+使用`configs/training/formal_single_seed.yaml`：seed=42，完整15003步，输出根为`outputs/training/formal_full_v1/`。它与已实测配置的训练控制相同，只切换输出位置及单seed选择。CLIP/BEiT-3/VISTA各九分支分三组组织，ALBEF模板仅为配置结构兼容而保留，不在27项主计划内。
 
-训练数据使用 JSON 或 JSONL。每条记录必须包含：
-
-```json
-{"sample_id":"pair-000001","semantic_id":"instance-000001","image":"subdir/000001.jpg","text":"caption"}
-```
-
-`image` 必须是相对 `image_root` 的路径。`sample_id` 和 `semantic_id` 必须全局唯一。这个限制保证每个 query 恰好只有一个 positive，其余 `N-1` 个 candidate 都是真 negative。完整示例见 `data/metadata/training_manifest_example.jsonl`。
-
-## 先运行独立梯度审计
-
-在填写正式训练参数前，先按 `configs/training/GRADIENT_AUDIT_PROTOCOL.md` 指定诊断 seed、batch size 与预处理设置，运行 `scripts/training/audit_gradients.py`。该入口核对 M0/数据身份并检查各关系、各损失的模块梯度；只做到 backward，不执行 optimizer step。ALBEF 还需显式诊断 alpha。
-
-审计结果位于 `outputs/pilot/gradient_audit/`，不会写入正式训练目录。当前阶段先完成该审计；带参数更新的 Pilot 另行确认后执行。
-
-## 正式训练前冻结配置
-
-编辑 `configs/training/train_runs.yaml` 中的 `null` 字段：
-
-- seed；
-- train manifest 与 image root；
-- optimizer、learning rate、weight decay；
-- scheduler、warmup、minimum LR ratio；
-- 每个模型的 micro-batch 与 gradient accumulation；
-- max steps；trajectory progress 与 resume retention 已固定；当前 20% resume interval 在 Pilot 后重新确认；
-- 每个模型的 augmentation。
-
-顶层 `controls` 是四个模型共同的默认值。若不同模型需要不同优化设置，可在对应 `models.<model>` 下增加 `optimizer`、`scheduler` 或 `budget`；同一个模型的两个分支仍从同一个 model block 读取，因此不能在 run 层改变控制变量。
-
-独立梯度审计通过后，下一阶段可另行确定带参数更新的 pilot 配置，跑通每个模型的两个分支各 2–10 个 optimizer steps，验证实际更新、优化器显存、checkpoint 写入和 resume，再冻结正式 budget。这个阶段不由梯度审计脚本启动。
-
-## AutoDL 执行顺序
-
-安装 CUDA 版 PyTorch 与依赖后，先完成上述独立梯度审计。以下命令属于配置已填写的训练阶段，逐项校验：
+下面只打印一个分支的计划，不启动训练：
 
 ```bash
-python scripts/training/train.py --run clip_standard --validate-only
-python scripts/training/train.py --run vista_standard --validate-only
-python scripts/training/train.py --run beit3_standard --validate-only
-python scripts/training/train.py --run albef_itc_only --validate-only
+python scripts/training/run_independent.py --config configs/training/formal_single_seed.yaml --runs clip_standard --seeds 42 --gpus 0
 ```
 
-运行一个分支：
+CLIP九分支计划示例：
 
 ```bash
-python -u scripts/training/train.py --run clip_standard
+python scripts/training/run_independent.py --config configs/training/formal_single_seed.yaml --seeds 42 --gpus 0 --runs \
+  clip_standard clip_fixed_2m clip_fixed_3m_fn_off clip_fixed_3m_fn_on \
+  clip_mixed_2m clip_mixed_3m_fn_off clip_mixed_3m_fn_on clip_full_3m_fn_off clip_full_3m_fn_on
 ```
 
-中断后只能显式恢复，程序不会覆盖既有 run：
+BEiT-3和VISTA使用同组分支名称及相应模型前缀。完整三组只读计划保存在`outputs/training_queues/formal_full_seed42_20260922/plan.json`。本次整理不执行`--execute`；全程评测调度与B/C缺项仍见核对报告，不把准备好的训练计划当成全链路已完成。
+
+## 通用和历史计划入口
+
+以下`SEED_A/B/C`分别为已确认的42/43/44。默认命令只展示计划，不启动训练、不创建任务输出。
 
 ```bash
-python -u scripts/training/train.py \
-  --run clip_standard \
-  --resume outputs/training/clip_standard/checkpoints/resume/step_00001000.pt
+SEED_A=42
+SEED_B=43
+SEED_C=44
+# 单卡：三个gate任务依次运行。
+python scripts/training/run_independent.py --gate --seeds "$SEED_A" --gpus 0
+# 双卡：相同gate任务由两张卡独立领取。
+python scripts/training/run_independent.py --gate --seeds "$SEED_A" --gpus 0 1
+# 三个主模型79个任务的计划，ALBEF不在该矩阵中。
+python scripts/training/run_independent.py --matrix --seeds "$SEED_A" "$SEED_B" "$SEED_C" --gpus 0
+# 显式选择分支与种子。
+python scripts/training/run_independent.py --runs clip_mixed_3m_fn_off beit3_standard --seeds "$SEED_A" --gpus 0
 ```
 
-每个 run 的 `checkpoints/resume/latest.json` 会指向最新可恢复的完整 checkpoint；运行中只保留最新两份完整 resume state。训练进度 1%、5%、20%、50% 另存 model-only trajectory snapshot，100% 的 final full checkpoint 同时是最终轨迹点和评测输入。轨迹表示评测在 branch 完成后批量运行，不在训练中改变模型状态。
+获得开训指令并完成目标4090的短程检查后，增加`--execute`执行。入口先验证所有选中配置、数据和权重身份，再开始训练。默认GPU槽为0，双卡需明确指定0 1；不自动探测后改变实验定义。`run_all.sh`仅转发同样参数。
 
-一个 branch 完成后，使用服务器 Pilot 已确认的评测 batch size 导出全部轨迹 raw embedding，并计算相邻变化：
+## 停止在20%与模型快照
+
+当前`save_resume_checkpoints: false`，只保存模型轨迹。`--gate`保持完整训练计划，在3001步保存20%模型快照并执行验证后停止。新启动队列拒绝非空输出。
 
 ```bash
-python -u scripts/evaluation/evaluate_trajectory.py \
-  --run clip_standard \
-  --batch-size 128 \
-  --device cuda
+python scripts/training/run_independent.py \
+  --runs clip_standard beit3_standard vista_standard \
+  --seeds "$SEED_A" --gpus 0 --stop-after-step 3001 --execute
 ```
 
-评测器固定处理 COCO 5K 与 LCS 10K，不接受改变 Probe 的命令行参数。正式定义见 `configs/evaluation/TRAJECTORY_EVALUATION_PROTOCOL.md`。
+上例展示诊断停止方式，不用于本次完整正式训练。已完成的诊断为24项，其权重已退役，旧目录仍保留非权重记录，因此不应重新执行旧诊断队列。完整任务从M0开始，不能从已保存的20%模型精确恢复；完整状态恢复仅作为兼容能力保留。见[检查点协议](CHECKPOINT_PROTOCOL.md)。
 
-全部 8 个分支顺序执行：
+## 输出与并发
 
-```bash
-bash scripts/training/run_all.sh
+当前正式目录为`outputs/training/formal_full_v1/<模板run>/seed_42/`。历史诊断记录留在`outputs/training/formal_v1/`。manifest中的run_id包含seed，跨轮比较同时核对配置与权重SHA。每任务保留独立日志、轨迹和来源元数据；不创建恢复指针。数据和M0只读共享。
+
+同一仓库的调度器使用GPU槽锁，单任务CLI使用输出锁。一任务失败后停止派发新任务，已运行同伴允许完成；中断时回收已启动子进程。外部程序占卡及异常退出遗留锁需核对进程后处理，程序不删除未知锁。
+
+## 验证
+
+训练/验证batch均36；验证固定丢8条，实际7992条/222批。关闭梯度裁剪仍计算并记录梯度范数，非有限损失或梯度拒绝更新。日志记录六方向损失、查询计数、分组、候选池、logit_scale与随机流版本。
+
+本地CPU回归：
+
+```powershell
+& 'D:/conda/envs/modality-gap/python.exe' -m unittest discover -s tests -t . -p 'test_*.py' -q
 ```
 
-## 已编码的实验控制
+CPU测试覆盖目标数学与小模型更新；24项已通过当前4090的20%实跑，三个Full GCL FN-on暂无本轮GPU实测。训练代码不自动降低batch、改为梯度累积或开启DDP。当前A0–A6和MMEB Local已实现；自动评测队列仍针对20%诊断，不可直接接管完整epoch。B1、B3、Global及C尚未全部落地。
 
-- 每个 run 都重新从锁定 SHA-256 的 M0 checkpoint 初始化；只有显式 `--resume` 才恢复训练状态。
-- 每个模型的两个分支共享数据、顺序、augmentation、optimizer、scheduler、batch、budget 和 seed。
-- 数据 augmentation 与模型随机数按 batch/step 派生，避免一个分支的额外 forward 改变下一个 batch 的共同随机路径。
-- relation 循环以 optimizer step 为单位；梯度累积的所有 micro-batch 使用同一 relation。
-- Standard 与 Mixed 每个 micro-batch 都有 `2N` 个 positive supervision terms、每个 query 有 `N` 个 candidates 和 `N-1` 个 negatives。
-- VISTA 的 `IT` 只调用原生 `encode_mm`；CLIP/BEiT-3 使用归一化 `I/T` 后的 `normalize(I + T)`。
-- ALBEF ITC-only 保留原生 momentum encoders、queue、temperature 和 soft targets；Full 直接使用原生 ITC+ITM+MLM。
-- 第一版正式运行目标是单张 A800；不会静默切换到多卡或改变 negative pool。
-
-## 本地测试
-
-不需要 checkpoint 或 GPU 的测试命令：
-
-```bash
-python -m unittest discover -s tests -t . -p 'test_*.py' -v
-```
-
-真实模型的 checkpoint load、单步 forward/backward、峰值显存和 BF16 数值稳定性必须在 AutoDL A800 pilot 中完成。
+A/B/C范围与未完成项见 [ABC_IMPLEMENTATION_DESIGN.md](../evaluation/ABC_IMPLEMENTATION_DESIGN.md)。实际已验证环境记录在`configs/runtime/verified_autodl_4090_20260922.json`；该文件为环境清单，不是完整安装锁，不应按旧requirements说明重装当前已跑通的环境。

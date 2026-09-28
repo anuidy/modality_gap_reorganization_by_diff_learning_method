@@ -6,19 +6,27 @@ from typing import Any, Mapping
 
 import yaml
 
-from training.checkpoint_plan import build_checkpoint_plan
+from training.checkpoint_plan import (
+    DEFAULT_RESUME_PROGRESS_INTERVAL, DEFAULT_RESUME_RETENTION, build_checkpoint_plan,
+)
 
+
+from objectives.contrastive import BRANCH_DEFINITIONS
+
+
+class UniqueKeyLoader(yaml.SafeLoader):
+    def construct_mapping(self, node, deep=False):
+        keys = [self.construct_object(key, deep=deep) for key, _ in node.value]
+        if len(keys) != len(set(keys)):
+            raise ValueError("Duplicate YAML configuration keys are not allowed.")
+        return super().construct_mapping(node, deep=deep)
 
 EXPECTED_RUNS: dict[str, tuple[str, str]] = {
-    "clip_standard": ("clip", "standard"),
-    "clip_count_matched_mixed": ("clip", "count_matched_mixed"),
-    "vista_standard": ("vista", "standard"),
-    "vista_count_matched_mixed": ("vista", "count_matched_mixed"),
-    "beit3_standard": ("beit3", "standard"),
-    "beit3_count_matched_mixed": ("beit3", "count_matched_mixed"),
-    "albef_itc_only": ("albef", "itc_only"),
-    "albef_full": ("albef", "full_albef"),
+    f"{model}_{branch}": (model, branch)
+    for model in ("clip", "beit3", "vista") for branch in BRANCH_DEFINITIONS
 }
+EXPECTED_RUNS.update({"albef_itc_only": ("albef", "itc_only"), "albef_full": ("albef", "full_albef")})
+
 
 ALLOWED_RUN_KEYS = {"model", "branch", "output_dir"}
 
@@ -57,6 +65,8 @@ class RunConfig:
     gradient_clip_norm: float | None
     augmentation: Mapping[str, Any]
     model_options: Mapping[str, Any]
+    save_resume_checkpoints: bool = True
+    validation_progress_interval: float | None = None
     dataset_name: str | None = None
     dataset_spec: Path | None = None
     split_lock: Path | None = None
@@ -69,6 +79,8 @@ class RunConfig:
     lcs_probe_manifest_sha256: str | None = None
     coco_probe_manifest: Path | None = None
     coco_probe_manifest_sha256: str | None = None
+    progress_reference_steps: int | None = None
+    scheduler_decay_steps: int | None = None
 
     @property
     def effective_batch_size(self) -> int:
@@ -77,7 +89,7 @@ class RunConfig:
 
 def _load_payload(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as handle:
-        payload = yaml.safe_load(handle)
+        payload = yaml.load(handle, Loader=UniqueKeyLoader)
     if not isinstance(payload, dict):
         raise ValueError("Training config must contain a YAML mapping.")
     return payload
@@ -94,7 +106,7 @@ def validate_experiment_matrix(payload: Mapping[str, Any]) -> None:
     if set(runs) != set(EXPECTED_RUNS):
         missing = sorted(set(EXPECTED_RUNS) - set(runs))
         extra = sorted(set(runs) - set(EXPECTED_RUNS))
-        raise ValueError(f"The formal matrix must contain exactly eight runs; missing={missing}, extra={extra}.")
+        raise ValueError(f"The formal matrix must contain all nine main-model branches and the two ALBEF branches; missing={missing}, extra={extra}.")
 
     for run_id, (expected_model, expected_branch) in EXPECTED_RUNS.items():
         run = runs[run_id]
@@ -215,10 +227,10 @@ def load_run_config(
             "trajectory_progress_fractions", checkpointing.get("trajectory_progress_fractions")
         ),
         "resume_progress_interval": choose(
-            "resume_progress_interval", checkpointing.get("resume_progress_interval")
+            "resume_progress_interval", checkpointing.get("resume_progress_interval", DEFAULT_RESUME_PROGRESS_INTERVAL)
         ),
         "resume_retention": choose(
-            "resume_retention", checkpointing.get("resume_retention")
+            "resume_retention", checkpointing.get("resume_retention", DEFAULT_RESUME_RETENTION)
         ),
         "augmentation_name": choose("augmentation_name", _nested(model, "augmentation", "name")),
         "augmentation_scale_min": choose(
@@ -247,6 +259,10 @@ def load_run_config(
         raise ValueError("warmup_steps must be a non-negative integer.")
     if values["warmup_steps"] >= values["max_steps"]:
         raise ValueError("warmup_steps must be smaller than max_steps.")
+    scheduler_decay_steps = controls.get("scheduler", {}).get("decay_steps")
+    if scheduler_decay_steps is not None and (type(scheduler_decay_steps) is not int or
+            not values["warmup_steps"] < scheduler_decay_steps <= values["max_steps"]):
+        raise ValueError("scheduler.decay_steps must be an integer after warmup and no later than max_steps.")
     try:
         trajectory_progress_fractions = tuple(
             float(fraction) for fraction in values["trajectory_progress_fractions"]
@@ -258,11 +274,20 @@ def load_run_config(
         resume_retention = int(values["resume_retention"])
     except (TypeError, ValueError) as error:
         raise ValueError("resume checkpoint settings must be numeric.") from error
+    save_resume_checkpoints = checkpointing.get("save_resume_checkpoints", True)
+    if type(save_resume_checkpoints) is not bool:
+        raise ValueError("save_resume_checkpoints must be a boolean.")
+    interval_value = checkpointing.get("validation_progress_interval")
+    validation_progress_interval = float(interval_value) if interval_value is not None else None
+    progress_reference_steps = checkpointing.get("progress_reference_steps")
     build_checkpoint_plan(
         max_steps=int(values["max_steps"]),
         trajectory_progress_fractions=trajectory_progress_fractions,
         resume_progress_interval=resume_progress_interval,
         resume_retention=resume_retention,
+        save_resume_checkpoints=save_resume_checkpoints,
+        validation_progress_interval=validation_progress_interval,
+        progress_reference_steps=progress_reference_steps,
     )
     if values["optimizer_type"] != "adamw":
         raise ValueError("The current training engine supports optimizer.type=adamw.")
@@ -282,10 +307,8 @@ def load_run_config(
         raise ValueError("micro_batch_size must be at least 2 for contrastive training.")
     if not isinstance(values["validation_sample_count"], int) or values["validation_sample_count"] <= 0:
         raise ValueError("validation_sample_count must be a positive integer.")
-    if values["validation_sample_count"] % int(values["micro_batch_size"]) != 0:
-        raise ValueError(
-            "micro_batch_size must divide validation_sample_count so candidate counts stay fixed."
-        )
+    if values["validation_sample_count"] < int(values["micro_batch_size"]):
+        raise ValueError("Validation must contain at least one complete training-sized batch.")
     if values["dataset_name"] != "lcs_558k":
         raise ValueError("The formal training matrix must use dataset_name=lcs_558k.")
     precision = str(controls.get("precision", "bf16"))
@@ -318,14 +341,15 @@ def load_run_config(
     }
     if run["model"] == "albef":
         queue_size = int(_nested(model, "options", "queue_size") or 65536)
-        effective_batch_size = int(values["micro_batch_size"]) * int(values["gradient_accumulation"])
-        if queue_size % effective_batch_size != 0:
-            raise ValueError(
-                f"ALBEF effective_batch_size must divide its native queue_size {queue_size}."
-            )
+        if queue_size < int(values["micro_batch_size"]) * int(values["gradient_accumulation"]):
+            raise ValueError("ALBEF batch cannot exceed queue capacity.")
+    if run["branch"].startswith("mixed_") and int(values["micro_batch_size"]) % 3:
+        raise ValueError("Mixed requires micro_batch_size divisible by three.")
+    # Seed is part of the task identity; GPU count never changes the experiment.
+    output_value = str(Path(output_value) / f"seed_{int(values['seed'])}")
 
     return RunConfig(
-        run_id=run_id,
+        run_id=f"{run_id}_seed_{int(values['seed'])}",
         model_name=run["model"],
         branch=run["branch"],
         checkpoint=checkpoint,
@@ -357,6 +381,8 @@ def load_run_config(
         gradient_clip_norm=(float(gradient_clip_norm) if gradient_clip_norm is not None else None),
         augmentation=augmentation,
         model_options=dict(model.get("options", {})),
+        save_resume_checkpoints=save_resume_checkpoints,
+        validation_progress_interval=validation_progress_interval,
         dataset_name=str(values["dataset_name"]),
         dataset_spec=_resolved_path(project_root, str(values["dataset_spec"])),
         split_lock=_resolved_path(project_root, str(values["split_lock"])),
@@ -369,4 +395,6 @@ def load_run_config(
         lcs_probe_manifest_sha256=str(values["lcs_probe_manifest_sha256"]),
         coco_probe_manifest=_resolved_path(project_root, str(values["coco_probe_manifest"])),
         coco_probe_manifest_sha256=str(values["coco_probe_manifest_sha256"]),
+        progress_reference_steps=progress_reference_steps,
+        scheduler_decay_steps=scheduler_decay_steps,
     )

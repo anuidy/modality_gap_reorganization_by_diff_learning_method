@@ -1,0 +1,3 @@
+# Optional extended evaluation/statistics dependency; do not reinstall the running training environment.
+# scipy.io reads the official ImageNet devkit; scipy.stats supplies the paired-seed Student-t interval.
+scipy==1.13.1

@@ -13,10 +13,10 @@ CONFIG_PATH = PROJECT_ROOT / "configs" / "training" / "train_runs.yaml"
 
 
 class ValidationConfigTest(unittest.TestCase):
-    def test_micro_batch_must_divide_locked_validation_count(self):
+    def test_validation_accepts_training_batch_and_drops_partial_tail(self):
         overrides = {
             "seed": 7,
-            "micro_batch_size": 128,
+            "micro_batch_size": 36,
             "gradient_accumulation": 1,
             "optimizer_type": "adamw",
             "learning_rate": 1e-5,
@@ -30,8 +30,10 @@ class ValidationConfigTest(unittest.TestCase):
             "augmentation_scale_max": 1.0,
             "augmentation_hflip": 0.5,
         }
-        with self.assertRaisesRegex(ValueError, "divide validation_sample_count"):
-            load_run_config(CONFIG_PATH, "clip_standard", PROJECT_ROOT, overrides)
+        config = load_run_config(CONFIG_PATH, "clip_standard", PROJECT_ROOT, overrides)
+        self.assertEqual(config.validation_sample_count // config.micro_batch_size, 222)
+        self.assertEqual(config.validation_sample_count % config.micro_batch_size, 8)
+
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@ from PIL import Image
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from objectives.contrastive import RelationAudit, relation_for_optimizer_step  # noqa: E402
+from objectives.contrastive import RelationAudit  # noqa: E402
 from training.backends import PreparedBatch, TrainingBackend, TrainingStepResult  # noqa: E402
 from training.config import RunConfig  # noqa: E402
 from training.engine import run_training, sha256_file  # noqa: E402
@@ -37,7 +37,7 @@ class FakeBackend(TrainingBackend):
     def forward(self, batch, branch, optimizer_step):
         self.assert_branch = branch
         loss = self.weight.square()
-        relation = relation_for_optimizer_step(optimizer_step)
+        relation = "I<->T+I<->IT+T<->IT"
         batch_size = len(batch.semantic_ids)
         return TrainingStepResult(
             loss=loss,
@@ -53,7 +53,7 @@ class FakeBackend(TrainingBackend):
 
 
 class TrainingEngineTest(unittest.TestCase):
-    def test_gradient_accumulation_keeps_one_relation_per_optimizer_step(self):
+    def test_accumulation_and_checkpoint_resume_preserve_the_branch(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             checkpoint = root / "m0.pt"
@@ -74,9 +74,9 @@ class TrainingEngineTest(unittest.TestCase):
             manifest = root / "train.json"
             manifest.write_text(json.dumps({"samples": samples}), encoding="utf-8")
             config = RunConfig(
-                run_id="clip_count_matched_mixed",
+                run_id="clip_mixed_3m_fn_off",
                 model_name="clip",
-                branch="count_matched_mixed",
+                branch="mixed_3m_fn_off",
                 checkpoint=checkpoint,
                 checkpoint_sha256=sha256_file(checkpoint),
                 resources={},
@@ -118,7 +118,7 @@ class TrainingEngineTest(unittest.TestCase):
             ]
             self.assertEqual(
                 [record["relation_audit"]["relation"] for record in records],
-                ["I<->T", "I<->IT", "T<->IT"],
+                ["I<->T+I<->IT+T<->IT"] * 3,
             )
             self.assertTrue(
                 all(

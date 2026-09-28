@@ -1,0 +1,247 @@
+# Progress is epoch-based: 100% = 15003 steps, 200% = two epochs.
+schema_version: 1
+status: beit3_two_epoch_seed42_epoch_percent_v2
+controls:
+  seed: 42
+  deterministic: true
+  precision: bf16
+  data:
+    dataset_name: lcs_558k
+    dataset_spec: configs/data/formal_datasets.yaml
+    split_lock: data/splits/lcs_558k_split_lock_v1.json
+    split_lock_sha256: 2e4f3cb62be0e2c6737dfdb2b6136c96ade8565b326a65cefa96d942cddf9f1e
+    train_manifest: data/processed/lcs_558k/manifests/train_v1.jsonl
+    train_manifest_sha256: e25de59aedd14edb460874c70ed62426d1ffe1c380f46461c5d331b335898190
+    validation_manifest: data/processed/lcs_558k/manifests/validation_v1.jsonl
+    validation_manifest_sha256: 9b4727f88c8ec613a18791813401832cd8829b08b3fff0dbf61dbccec52110c2
+    validation_sample_count: 8000
+    image_root: data/raw/lcs_558k/images
+    lcs_probe_manifest: data/splits/lcs_558k_in_domain_probe_v1.json
+    lcs_probe_manifest_sha256: 3895e647e218d8565dc51841c5de7cc57079568dcc8b69d33d2e5e08bd4f9aa1
+    coco_probe_manifest: data/splits/coco_2017_val_probe_v1.json
+    coco_probe_manifest_sha256: d8133889432c37f3a436b7dcff769f87cf9b35eb6ea49a6fba00e7c32d129f85
+    num_workers: 4
+  optimizer:
+    type: adamw
+    learning_rate: 1.0e-05
+    weight_decay: 0.05
+    beta1: 0.9
+    beta2: 0.999
+    epsilon: 1.0e-08
+    gradient_clip_norm: null
+  scheduler:
+    type: cosine
+    warmup_steps: 300
+    min_lr_ratio: 0.1
+  budget:
+    max_steps: 30006
+    log_interval: 10
+  checkpointing:
+    trajectory_progress_fractions:
+    - 0.2
+    - 0.4
+    - 0.6
+    - 0.8
+    - 1.0
+    - 1.2
+    - 1.4
+    - 1.6
+    - 1.8
+    - 2.0
+    save_resume_checkpoints: true
+    resume_progress_interval: 0.5
+    resume_retention: 4
+    validation_progress_interval: 0.2
+    progress_reference_steps: 15003
+  seeds:
+  - 42
+models:
+  clip:
+    trainable_scope: full_parameter
+    checkpoint: data/raw/models/clip_sf/ViT-L-14.pt
+    checkpoint_sha256: b8cca3fd41ae0c99ba7e8951adf17d267cdb84cd88be6f7c2e0eca1737a03836
+    resources: {}
+    batch:
+      micro_batch_size: 36
+      gradient_accumulation: 1
+    augmentation:
+      name: random_resized_crop
+      scale_min: 0.9
+      scale_max: 1.0
+      horizontal_flip_probability: 0.5
+    options:
+      image_size: 224
+      max_text_tokens: 77
+  vista:
+    trainable_scope: full_parameter
+    checkpoint: data/raw/models/vista/BGE_EVA_Token_S1.pth
+    checkpoint_sha256: 05a4ce3033d52f96032c2cb79958b361ea9f378aa4dac44069476b433d7281cf
+    resources:
+      text_backbone: data/raw/models/vista/bge-base-en-v1.5
+    batch:
+      micro_batch_size: 36
+      gradient_accumulation: 1
+    augmentation:
+      name: random_resized_crop
+      scale_min: 0.9
+      scale_max: 1.0
+      horizontal_flip_probability: 0.5
+    options:
+      image_size: 224
+      max_text_tokens: 64
+      temperature: 0.02
+  beit3:
+    trainable_scope: full_parameter
+    checkpoint: data/raw/models/beit3/beit3_base_itc_patch16_224.pth
+    checkpoint_sha256: d483a41d92b9aea7ef87d17551413b8c22faae927110666b01ac3aa7a199a25b
+    resources:
+      sentencepiece_model: data/raw/models/beit3/beit3.spm
+    batch:
+      micro_batch_size: 36
+      gradient_accumulation: 1
+    augmentation:
+      name: random_resized_crop
+      scale_min: 0.9
+      scale_max: 1.0
+      horizontal_flip_probability: 0.5
+    options:
+      image_size: 224
+      max_text_tokens: 64
+  albef:
+    trainable_scope: full_parameter
+    checkpoint: data/raw/models/albef/ALBEF_14M.pth
+    checkpoint_sha256: 41c106161c9eb1a950260a2773995af67917ee8887bfb2a46a2e2aeed92fb2c7
+    resources:
+      text_backbone: data/raw/models/albef/bert-base-uncased
+    batch:
+      micro_batch_size: 36
+      gradient_accumulation: 1
+    augmentation:
+      name: random_resized_crop
+      scale_min: 0.9
+      scale_max: 1.0
+      horizontal_flip_probability: 0.5
+    options:
+      image_size: 256
+      max_text_tokens: 30
+      alpha: 0.4
+      alpha_warmup_steps: 300
+      mlm_probability: 0.15
+      queue_size: 65536
+runs:
+  clip_standard:
+    model: clip
+    branch: standard
+    output_dir: outputs/training/beit3_two_epoch_v2/clip_standard
+  clip_fixed_2m:
+    model: clip
+    branch: fixed_2m
+    output_dir: outputs/training/beit3_two_epoch_v2/clip_fixed_2m
+  clip_fixed_3m_fn_off:
+    model: clip
+    branch: fixed_3m_fn_off
+    output_dir: outputs/training/beit3_two_epoch_v2/clip_fixed_3m_fn_off
+  clip_fixed_3m_fn_on:
+    model: clip
+    branch: fixed_3m_fn_on
+    output_dir: outputs/training/beit3_two_epoch_v2/clip_fixed_3m_fn_on
+  clip_mixed_2m:
+    model: clip
+    branch: mixed_2m
+    output_dir: outputs/training/beit3_two_epoch_v2/clip_mixed_2m
+  clip_mixed_3m_fn_off:
+    model: clip
+    branch: mixed_3m_fn_off
+    output_dir: outputs/training/beit3_two_epoch_v2/clip_mixed_3m_fn_off
+  clip_mixed_3m_fn_on:
+    model: clip
+    branch: mixed_3m_fn_on
+    output_dir: outputs/training/beit3_two_epoch_v2/clip_mixed_3m_fn_on
+  clip_full_3m_fn_off:
+    model: clip
+    branch: full_3m_fn_off
+    output_dir: outputs/training/beit3_two_epoch_v2/clip_full_3m_fn_off
+  clip_full_3m_fn_on:
+    model: clip
+    branch: full_3m_fn_on
+    output_dir: outputs/training/beit3_two_epoch_v2/clip_full_3m_fn_on
+  beit3_standard:
+    model: beit3
+    branch: standard
+    output_dir: outputs/training/beit3_two_epoch_v2/beit3_standard
+  beit3_fixed_2m:
+    model: beit3
+    branch: fixed_2m
+    output_dir: outputs/training/beit3_two_epoch_v2/beit3_fixed_2m
+  beit3_fixed_3m_fn_off:
+    model: beit3
+    branch: fixed_3m_fn_off
+    output_dir: outputs/training/beit3_two_epoch_v2/beit3_fixed_3m_fn_off
+  beit3_fixed_3m_fn_on:
+    model: beit3
+    branch: fixed_3m_fn_on
+    output_dir: outputs/training/beit3_two_epoch_v2/beit3_fixed_3m_fn_on
+  beit3_mixed_2m:
+    model: beit3
+    branch: mixed_2m
+    output_dir: outputs/training/beit3_two_epoch_v2/beit3_mixed_2m
+  beit3_mixed_3m_fn_off:
+    model: beit3
+    branch: mixed_3m_fn_off
+    output_dir: outputs/training/beit3_two_epoch_v2/beit3_mixed_3m_fn_off
+  beit3_mixed_3m_fn_on:
+    model: beit3
+    branch: mixed_3m_fn_on
+    output_dir: outputs/training/beit3_two_epoch_v2/beit3_mixed_3m_fn_on
+  beit3_full_3m_fn_off:
+    model: beit3
+    branch: full_3m_fn_off
+    output_dir: outputs/training/beit3_two_epoch_v2/beit3_full_3m_fn_off
+  beit3_full_3m_fn_on:
+    model: beit3
+    branch: full_3m_fn_on
+    output_dir: outputs/training/beit3_two_epoch_v2/beit3_full_3m_fn_on
+  vista_standard:
+    model: vista
+    branch: standard
+    output_dir: outputs/training/beit3_two_epoch_v2/vista_standard
+  vista_fixed_2m:
+    model: vista
+    branch: fixed_2m
+    output_dir: outputs/training/beit3_two_epoch_v2/vista_fixed_2m
+  vista_fixed_3m_fn_off:
+    model: vista
+    branch: fixed_3m_fn_off
+    output_dir: outputs/training/beit3_two_epoch_v2/vista_fixed_3m_fn_off
+  vista_fixed_3m_fn_on:
+    model: vista
+    branch: fixed_3m_fn_on
+    output_dir: outputs/training/beit3_two_epoch_v2/vista_fixed_3m_fn_on
+  vista_mixed_2m:
+    model: vista
+    branch: mixed_2m
+    output_dir: outputs/training/beit3_two_epoch_v2/vista_mixed_2m
+  vista_mixed_3m_fn_off:
+    model: vista
+    branch: mixed_3m_fn_off
+    output_dir: outputs/training/beit3_two_epoch_v2/vista_mixed_3m_fn_off
+  vista_mixed_3m_fn_on:
+    model: vista
+    branch: mixed_3m_fn_on
+    output_dir: outputs/training/beit3_two_epoch_v2/vista_mixed_3m_fn_on
+  vista_full_3m_fn_off:
+    model: vista
+    branch: full_3m_fn_off
+    output_dir: outputs/training/beit3_two_epoch_v2/vista_full_3m_fn_off
+  vista_full_3m_fn_on:
+    model: vista
+    branch: full_3m_fn_on
+    output_dir: outputs/training/beit3_two_epoch_v2/vista_full_3m_fn_on
+  albef_itc_only:
+    model: albef
+    branch: itc_only
+    output_dir: outputs/training/beit3_two_epoch_v2/albef_itc_only
+  albef_full:
+    model: albef
+    branch: full_albef
+    output_dir: outputs/training/beit3_two_epoch_v2/albef_full

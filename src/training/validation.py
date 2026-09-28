@@ -11,11 +11,8 @@ from torch.utils.data import DataLoader
 
 from datasets.training_pairs import RawTrainingBatch
 from objectives.contrastive import (
-    ObjectiveResult,
-    RepresentationBatch,
-    additive_multimodal_embedding,
-    count_matched_mixed_objective,
-    standard_objective,
+    ObjectiveResult, RepresentationBatch, additive_multimodal_embedding,
+    standard_objective, training_objective, BRANCH_DEFINITIONS,
 )
 from training.backends import PreparedBatch, TrainingBackend
 
@@ -29,45 +26,21 @@ def _objective_metrics(prefix: str, result: ObjectiveResult) -> dict[str, torch.
 
 
 def relation_validation_metrics(
-    *,
-    semantic_ids: tuple[str, ...],
-    image: torch.Tensor,
-    text: torch.Tensor,
-    logit_scale: float | torch.Tensor,
-    branch: str,
-    multimodal: torch.Tensor | None = None,
+    *, semantic_ids: tuple[str, ...], image: torch.Tensor, text: torch.Tensor,
+    logit_scale: float | torch.Tensor, branch: str, multimodal: torch.Tensor | None = None,
 ) -> dict[str, torch.Tensor]:
-    """Evaluate one common I<->T exam plus optional Mixed-only diagnostics."""
-
-    image = F.normalize(image, dim=-1)
-    text = F.normalize(text, dim=-1)
-    common = standard_objective(logit_scale)(
-        RepresentationBatch(
-            semantic_ids=semantic_ids,
-            representations={"I": image, "T": text},
-        )
-    )
+    representations = {"I": image, "T": text}
+    common = standard_objective(logit_scale)(RepresentationBatch(semantic_ids, representations))
     metrics = _objective_metrics("common/I<->T", common)
     if branch == "standard":
         return metrics
-    if branch != "count_matched_mixed":
-        raise ValueError(f"Unsupported relation validation branch: {branch}")
-
-    if multimodal is None:
-        multimodal = additive_multimodal_embedding(image, text)
-    representations = {
-        "I": image,
-        "T": text,
-        "IT": F.normalize(multimodal, dim=-1),
-    }
-    for relation in ("I<->IT", "T<->IT"):
-        diagnostic = count_matched_mixed_objective(logit_scale, relation)(
-            RepresentationBatch(
-                semantic_ids=semantic_ids,
-                representations=representations,
-            )
-        )
-        metrics.update(_objective_metrics(f"diagnostic/{relation}", diagnostic))
+    if branch not in BRANCH_DEFINITIONS:
+        raise ValueError(f"Unsupported validation branch: {branch}")
+    if branch != "fixed_2m":
+        representations["IT"] = multimodal if multimodal is not None else additive_multimodal_embedding(image, text)
+    # Validation uses a fixed diagnostic partition, independent of training step.
+    diagnostic = training_objective(logit_scale, branch, group_seed=0)(RepresentationBatch(semantic_ids, representations))
+    metrics.update(_objective_metrics("diagnostic/" + branch, diagnostic))
     return metrics
 
 
@@ -258,7 +231,7 @@ def backend_validation_metrics(
         text = model.encode_text(batch.text_tokens)
         multimodal = (
             model.encode_mm(batch.images, batch.text_tokens)
-            if branch == "count_matched_mixed"
+            if branch not in {"standard", "fixed_2m"}
             else None
         )
         return relation_validation_metrics(
@@ -271,12 +244,11 @@ def backend_validation_metrics(
         )
     if backend.model_name == "beit3":
         input_ids, padding_mask = batch.text_tokens
-        image, text = backend.model(  # type: ignore[attr-defined]
-            image=batch.images,
-            text_description=input_ids,
-            padding_mask=padding_mask,
-            only_infer=True,
-        )
+        model = backend.model
+        image_output = model.beit3(textual_tokens=None, visual_tokens=batch.images, text_padding_position=None)
+        image = model.vision_head(image_output["encoder_out"][:, 0, :])
+        text_output = model.beit3(textual_tokens=input_ids, visual_tokens=None, text_padding_position=padding_mask)
+        text = model.language_head(text_output["encoder_out"][:, 0, :])
         return relation_validation_metrics(
             semantic_ids=batch.semantic_ids,
             image=image,
@@ -377,11 +349,15 @@ def run_validation(
     return {
         "completed_steps": optimizer_step,
         "sample_count": sample_count,
+        "manifest_sample_count": len(loader.dataset) if hasattr(loader, "dataset") else sample_count,
+        "dropped_sample_count": len(loader.dataset) - sample_count if hasattr(loader, "dataset") else 0,
+        "batch_size": getattr(loader, "batch_size", None),
+        "drop_last": getattr(loader, "drop_last", False),
         "batch_count": batch_count,
         "metrics": {name: value / sample_count for name, value in totals.items()},
         "policy": {
             "common_exam": "I<->T" if backend.model_name != "albef" else "native_ITC_read_only",
-            "branch_diagnostics": branch in {"count_matched_mixed", "full_albef"},
+            "branch_diagnostics": branch != "standard" and branch != "itc_only",
             "checkpoint_selection": False,
             "parameter_updates": False,
             "fixed_view_and_model_rng_per_batch": True,

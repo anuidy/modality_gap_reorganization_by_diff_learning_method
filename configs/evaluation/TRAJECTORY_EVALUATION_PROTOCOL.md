@@ -1,12 +1,14 @@
 # Trajectory Embedding 与相邻几何变化评测协议
 
+> 指标的正式定义（八项指标的空间规则、公式与实现对照）见 `configs/evaluation/EIGHT_METRIC_PROTOCOL.md`。
+
 ## 输入
 
 每个完成的训练 branch 必须具备：
 
 - `run_manifest.json`，状态为 `complete`；
-- 1%、5%、20%、50% 的 model-only trajectory snapshot；
-- 100% 的 final full checkpoint；
+- 1%、5%、20%、50%、100%的模型轨迹快照；
+- `final.json`引用100%模型快照；读取器也兼容先验实验保留的最终完整检查点；
 - 同一模型在 COCO 5K 与 LCS 10K 上已经冻结的 M0 raw embedding artifact；
 - 固定 upper-triangle pair indices 与 M0 geometry reference。
 

@@ -18,29 +18,29 @@ class RelationBackendTest(unittest.TestCase):
         def joint_encoder():
             nonlocal calls
             calls += 1
-            return torch.nn.functional.normalize(torch.randn(4, 8), dim=-1)
+            return torch.nn.functional.normalize(torch.randn(6, 8), dim=-1)
 
-        image = torch.randn(4, 8, requires_grad=True)
-        text = torch.randn(4, 8, requires_grad=True)
-        semantic_ids = tuple(f"sample-{index}" for index in range(4))
+        image = torch.randn(6, 8, requires_grad=True)
+        text = torch.randn(6, 8, requires_grad=True)
+        semantic_ids = tuple(f"sample-{index}" for index in range(6))
 
         first = _relation_step(
-            semantic_ids, image, text, 10.0, "count_matched_mixed", 0, joint_encoder
+            semantic_ids, image, text, 10.0, "fixed_2m", 0, joint_encoder
         )
         self.assertEqual(first.audit.relation, "I<->T")
         self.assertEqual(calls, 0)
         second = _relation_step(
-            semantic_ids, image, text, 10.0, "count_matched_mixed", 1, joint_encoder
+            semantic_ids, image, text, 10.0, "mixed_3m_fn_off", 1, joint_encoder
         )
-        self.assertEqual(second.audit.relation, "I<->IT")
+        self.assertEqual(second.audit.relation, "I<->T+I<->IT+T<->IT")
         self.assertEqual(calls, 1)
 
     def test_learnable_scale_keeps_gradient_in_the_objective(self):
         raw_scale = torch.tensor(4.7, requires_grad=True)
-        image = torch.randn(4, 8, requires_grad=True)
-        text = torch.randn(4, 8, requires_grad=True)
+        image = torch.randn(6, 8, requires_grad=True)
+        text = torch.randn(6, 8, requires_grad=True)
         result = _relation_step(
-            tuple(str(index) for index in range(4)),
+            tuple(str(index) for index in range(6)),
             image,
             text,
             raw_scale.exp(),
